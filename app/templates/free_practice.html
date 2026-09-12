@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}自由练习 · 学习练习{% endblock %}
+{% block content %}
+<div class="page-heading"><div><h2>想练什么，就练什么</h2><p class="muted">挑一个薄弱点，也可以随机来几题。已在待办里的题不会重复加入。</p></div></div>
+<section class="panel"><form id="free-form">
+<label>练习方式<select id="free-mode"><option value="random">完全随机</option><option value="topic">我来描述范围</option></select></label>
+<label id="theme-label" hidden>想练哪些内容？<textarea id="theme" rows="3" maxlength="2000" placeholder="例如：我想练 Agent 的工具调用和 MCP，先不练强化学习"></textarea><small class="muted">模型理解你的描述，只从现有题库选题；不会临时编造原题。</small></label>
+<label>这次练几题 <input id="count" type="number" min="1" max="30" value="3" required></label>
+<details><summary>更多选项</summary><label><input id="only-new" type="checkbox"> 只练没提交过的题</label></details>
+<button class="primary" id="create-free" type="submit">开始随机练习</button>
+</form><p id="free-status" role="status"></p><div id="free-result"></div></section>
+<section class="panel"><h3>自由练习待办</h3>{% for task in tasks %}<div class="task-row"><div><h3>{{ task.prompt }}</h3><p class="muted">{{ task.category_path }}</p></div><a class="button-link" href="/practice/{{ task.id }}">继续练习 →</a></div>{% else %}<p class="muted">暂时没有待办，选几题开始吧。</p>{% endfor %}</section>
+<script src="/static/free_practice.js"></script>{% endblock %}

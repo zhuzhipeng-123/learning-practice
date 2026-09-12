@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}面试会话 · 学习练习{% endblock %}
+{% block content %}
+<section data-session-id="{{ session.id }}">
+<h2>{{ session.prompt }}</h2><p>会话状态：{{ '进行中' if session.status == 'active' else '已结束' }}</p>
+<p>已保存 {{ turns|length }} 条对话。</p>
+{% if latest_question %}<article><strong>当前追问</strong><pre>{{ latest_question }}</pre></article>{% endif %}
+<button data-interview-action="dialogue">查看已保存对话（会记录答案暴露）</button>
+<div id="saved-dialogue"></div>
+{% if session.status == 'active' %}
+<label>回答<textarea id="interview-answer" rows="7"></textarea></label>
+<button data-interview-action="save">保存回答</button>
+<button data-interview-action="followup">生成一个追问</button>
+<button data-interview-action="end">结束会话</button>
+{% endif %}
+<button data-interview-action="feedback">生成面试总结</button>
+<p class="muted">回答先保存在本地。点击生成后，只向该模块设置的模型服务发送本题及会话内容。查看总结会记录答案暴露。</p>
+<div id="interview-output" class="prose" role="status"></div>
+<p><a href="/interview">返回面试列表</a> · <a href="/settings">修改面试提示词和模型</a></p>
+</section>
+<script src="/static/interview.js"></script>
+{% endblock %}

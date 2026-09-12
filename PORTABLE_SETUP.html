@@ -1,0 +1,17 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>安装说明</title>
+<style>body{max-width:800px;margin:40px auto;padding:0 24px;font:16px/1.8 system-ui;color:#252525}pre{background:#f6f6f6;padding:16px;overflow:auto}a{color:#245b84}</style>
+<h1>安装说明</h1>
+<p>项目需要 Python 3.12。复制代码时保留 uv.lock，不复制其他电脑的 .venv。</p>
+<pre>uv sync --dev
+uv run python -m scripts.verify_install
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000</pre>
+<p>没有全局 uv，但项目已安装虚拟环境时：</p>
+<pre>.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000</pre>
+<p>浏览器打开 http://127.0.0.1:8000。Windows 时区依赖 tzdata 已加入项目。</p>
+<h2>配置与数据</h2>
+<p>参考 .env.example，在本机创建 .env；应用会自动加载，不覆盖已有环境变量。Agnes 需要 AGNES_API_KEY，飞书需要可用的 lark-cli 机器人身份和源文档权限。密钥不要写入代码。</p>
+<p>默认学习数据保存在 data/；可用 LEARNING_DATA_DIR 指定目录。迁移前会自动在数据目录生成 pre-migration-v1-*.db 备份；正式迁移后请保留备份。测试与安装检查使用独立临时数据库。</p>
+<p>演示样例命令默认写入 data-demo/，不会覆盖已有快照。真实学习从“题库与来源”进行同步。</p>
+<h2>导出</h2>
+<p>POST /api/exports 返回包含数据库、归档媒体和摘要清单的压缩包。写接口需要 X-Requested-With: learning-practice。POST /api/exports/verify 验证最近一次导出。校验每次使用新临时目录，不会直接恢复或替换正式库。</p>
+<p><a href="README.html">返回项目说明</a></p></html>

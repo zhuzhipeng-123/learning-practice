@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}题库与来源 · 学习练习{% endblock %}
+{% from "module_tree.html" import tree %}
+{% block content %}
+<h2>我的题库</h2><p class="muted">先看有哪些模块、各有多少题。飞书改动后，再更新一次。</p>
+<section class="panel"><h3>模块与题量</h3>{{ tree(theory_modules) }}{{ tree(code_modules) }}</section>
+<section class="panel"><h3>更新飞书内容</h3><label>这次改了什么？（可选）<textarea id="alignment-note" rows="3" maxlength="4000" placeholder="例如：Agent 新增了工具调用文档；删除了旧版 PPO 笔记；把两章内容合并了。"></textarea></label><p class="muted">程序读取最新目录和原文，再让模型核对你的说明。说明只用于检查，历史记录不会因此被删除。</p><button class="primary" data-align-source="">开始对齐更新</button><button id="show-alignment-result">查看上次更新</button><section id="alignment-result" role="status" hidden></section></section>
+<details class="panel"><summary>来源设置与原文覆盖</summary>
+  <details class="panel"><summary>飞书和本地数据怎样更新？</summary>
+    <p><strong>飞书：题目与参考资料的原本。本地：作答、评价、复习进度和历史版本。</strong></p>
+    <ul><li>同一文档新增或改写内容：点击“重新对齐飞书”。平时生成任务只使用本地题库，不读取飞书。</li><li>Wiki 是递归入口：点击对齐后逐层发现所有子节点，新建子文档自动登记并保留完整目录路径。入口以外的新文档需要在下方登记；不会追踪正文中的普通超链接。</li><li>标题、目录调整且原文块 ID 保留：继续沿用题目身份和历史；新任务使用新版本，已经开始的任务保留旧版本。</li><li>剪切重建、大幅重排或跨文档搬题：可能失去原块 ID，进入身份匹配候选，确认沿用已有题目后保留历史。</li><li>删减内容：完整读取后发现原位置缺失，先暂停新抽题；独立完整读取两次且排除歧义后才确认移除。历史题目版本、作答和评价保留；网络或权限失败不下架题目。</li><li>图片和表格归档到本地；素材不完整会显示缺项，不用模型补造原题。</li></ul>
+    <p class="muted">大改后点击重新对齐，再检查逐篇文档清单、覆盖清单与待确认候选。同步在后台运行，同一来源重复点击会复用运行中的任务。</p>
+  </details>
+  <article>
+    <h3>增加来源</h3>
+    <label>飞书链接<input id="source-url" type="url" placeholder="https://...feishu.cn/wiki/..."></label>
+    <label>题型<select id="source-type"><option value="code">代码</option><option value="theory">八股</option></select></label>
+    <button id="add-source">检查并登记</button>
+    <pre id="add-source-result" hidden></pre>
+  </article>
+  <details><summary>查看已连接的文档</summary>
+  {% if sources %}
+    {% for source in sources %}
+      <article>
+        <h3>{{ '代码' if source.question_type == 'code' else '八股' }} · <a href="{{ source.wiki_url }}" target="_blank" rel="noreferrer">打开飞书原文</a></h3>
+        <p>读取身份：{{ source.identity }}；启用：{{ source.enabled }}</p>
+        <p>上次完整同步：{{ source.last_complete_sync_at or "尚未完成" }}</p>
+        {% if source.last_error %}<p class="error">{{ source.last_error }}</p>{% endif %}
+        {% for error in material_errors if error.source_id == source.id %}<p class="error">{{ error.count }} 项素材未完成：{{ error.last_error }}</p>{% endfor %}
+        <button data-align-source="{{ source.id }}">重新对齐这个来源（含大模型分析）</button>
+        <pre data-sync-result="{{ source.id }}" hidden></pre>
+        <pre data-analysis-result="{{ source.id }}" hidden></pre>
+        {% if source.id in coverage %}<details><summary>代码题覆盖清单（逐节核验）</summary><p class="muted">目录名称不代表已收录 100 道题。以下只统计这篇文档实际存在的内容。</p><table class="coverage-table"><thead><tr><th>原文位置</th><th>状态</th><th>素材</th></tr></thead><tbody>{% for item in coverage[source.id] %}<tr><td><a href="{{ source.wiki_url }}#{{ item.anchor }}" target="_blank" rel="noreferrer">{{ item.path }}</a></td><td>{{ item.state }}</td><td>{{ item.images }} 图 / {{ item.text_blocks }} 文本块</td></tr>{% endfor %}</tbody></table></details>{% endif %}
+      </article>
+    {% endfor %}
+  {% else %}
+    <p>尚未登记来源。</p>
+  {% endif %}
+</details></details>
+<details class="panel"><summary>待整理内容 · {{ candidates|length }} 条</summary>
+  <p class="muted">明确题干与参考边界可自动入库；复合题、纯笔记和身份变化留待确认。Agnes 可提供边界建议，建议不会直接改写原文或自动发布。</p>
+  {% if candidates %}
+    {% for candidate in candidates %}
+      <details class="candidate-item">
+        <summary>{{ candidate.draft.prompt }}</summary>
+        <p>{{ candidate.draft.category_path }} · {{ candidate.main_anchor_block_id }}</p>
+        <p>{{ candidate.draft.reference_text or "参考材料不足" }}</p>
+        {% if candidate.draft.match_question_ids %}
+        <label>可能是已有题目的移动或重建，请确认身份
+          <select data-candidate-match="{{ candidate.id }}">
+            <option value="">请选择</option>
+            {% for question_id in candidate.draft.match_question_ids %}<option value="{{ question_id }}">沿用已有题目 {{ question_id }}</option>{% endfor %}
+            <option value="new">这是独立的新题</option>
+          </select>
+        </label>
+        {% endif %}
+        <button data-candidate-action="approve" data-candidate-id="{{ candidate.id }}">确认入题库</button>
+        <button data-candidate-action="reject" data-candidate-id="{{ candidate.id }}">忽略</button>
+        <p data-candidate-result="{{ candidate.id }}" role="status" hidden></p>
+      </details>
+    {% endfor %}
+  {% else %}<p>没有待确认候选。</p>{% endif %}
+</details>
+<script>
+document.querySelector("#add-source").addEventListener("click", async () => {
+  const result = document.querySelector("#add-source-result");
+  const response = await fetch("/api/sources", {
+    method: "POST",
+    headers: {"Content-Type": "application/json", "X-Requested-With": "learning-practice"},
+    body: JSON.stringify({url: document.querySelector("#source-url").value, question_type: document.querySelector("#source-type").value})
+  });
+  result.hidden = false;
+  await readResponse(response); result.textContent = '来源已连接，可以点击开始对齐更新。';
+});
+for (const button of document.querySelectorAll("[data-candidate-action]")) {
+  button.addEventListener("click", async () => {
+    const candidateId = button.dataset.candidateId;
+    const action = button.dataset.candidateAction;
+    const output = document.querySelector(`[data-candidate-result="${candidateId}"]`);
+    const choice = document.querySelector(`[data-candidate-match="${candidateId}"]`);
+    const body = choice?.value === 'new' ? {as_new: true} : {existing_question_id: choice?.value || null};
+    if (action === 'approve' && choice && !choice.value) { output.hidden = false; output.textContent = '请先确认题目身份'; return; }
+    button.disabled = true;
+    try {
+    const response = await fetch(`/api/candidates/${candidateId}/${action}`, {
+      method: "POST",
+      headers: {"X-Requested-With": "learning-practice", "Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    });
+    output.hidden = false;
+    await readResponse(response); output.textContent = action === 'approve' ? '已加入题库。' : '已忽略，片段没有变化时不再提醒。'; button.closest('.candidate-item').querySelectorAll('button').forEach(item=>item.disabled=true);
+    } catch (error) { output.hidden = false; output.textContent = error.message; }
+    finally { button.disabled = false; }
+  });
+}
+</script><script src="/static/alignment.js"></script>
+{% endblock %}

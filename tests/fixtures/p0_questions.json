@@ -1,0 +1,88 @@
+{
+  "parser_version": "p0-manual-v1",
+  "review_status": "manually_reviewed_from_revision_snapshots",
+  "questions": [
+    {
+      "sample_id": "code-move-zero",
+      "document_id": "demo-code-document",
+      "revision": "1583",
+      "question_type": "code",
+      "category_path": "hot100 > 移动0",
+      "main_anchor_block_id": "demo-reference-005",
+      "prompt_block_ids": ["demo-reference-005", "demo-reference-006"],
+      "reference_block_ids": ["demo-reference-007", "demo-reference-008", "demo-reference-009", "demo-reference-010", "demo-reference-011"],
+      "prompt": "给定数组 nums，将所有 0 移动到末尾，同时保持非零元素的相对顺序，并原地操作。示例：[0,1,0,3,12] -> [1,3,12,0,0]。",
+      "reference_text": "使用左右指针；右指针遇到非零值时与左指针交换并移动左指针。",
+      "dependencies": [{"kind": "media", "token": "demo-reference-012", "status": "verified", "sha256": "598a59ad01df186dc0b0b64b1e96760f9227f83151203c3616d6eea2bdabe863"}],
+      "material_status": "complete",
+      "boundary_note": "题干图片属于题目；后续双指针说明和代码属于参考答案；下一 h3 开始新题。"
+    },
+    {
+      "sample_id": "code-first-missing-positive",
+      "document_id": "demo-code-document",
+      "revision": "1583",
+      "question_type": "code",
+      "category_path": "hot100 > 缺失的第一个正数",
+      "main_anchor_block_id": "demo-reference-013",
+      "prompt_block_ids": ["demo-reference-013", "demo-reference-014"],
+      "reference_block_ids": ["demo-reference-015", "demo-reference-016", "demo-reference-017", "demo-reference-018"],
+      "prompt": "给定未排序整数数组 nums，找出没有出现的最小正整数；要求 O(n) 时间且只使用常数额外空间。",
+      "reference_text": "把 1..n 中的值交换到索引 value-1，再寻找首个 nums[i] != i+1 的位置。",
+      "dependencies": [{"kind": "media", "token": "demo-reference-019", "status": "verified", "sha256": "147c9f15b1c37005a06e88f63c5efa9d26580d99fb893a62d85f63b91b41e21d"}],
+      "material_status": "complete",
+      "boundary_note": "标题、题干图片、三个解释段和 Python 代码构成一题；下一 h3 开始新题。"
+    },
+    {
+      "sample_id": "theory-adamw-memory",
+      "document_id": "demo-theory-document",
+      "revision": "12089",
+      "question_type": "theory",
+      "category_path": "计算效率问题",
+      "main_anchor_block_id": "demo-reference-020",
+      "prompt_block_ids": ["demo-reference-021", "demo-reference-020"],
+      "reference_block_ids": ["demo-reference-022", "demo-reference-023"],
+      "prompt": "8 张 80GB 的 H100，如果用 AdamW 训练，光从显存角度看，最多能装下多少参数的模型？",
+      "reference_text": "原文按每参数 12 字节估算 8*80/12≈53B，并说明未计激活值和中间结果。评价必须暴露显存能否聚合等假设。",
+      "dependencies": [],
+      "material_status": "complete_reference_quality_flagged",
+      "boundary_note": "仅使用紧随问题后的两个回答段；后续矩阵乘法 FLOPs 内容不属于答案。"
+    },
+    {
+      "sample_id": "theory-stability-troubleshooting",
+      "document_id": "demo-theory-document",
+      "revision": "12089",
+      "question_type": "theory",
+      "category_path": "大模型架构 > 模型超参数选型 > 稳定性",
+      "main_anchor_block_id": "demo-reference-024",
+      "prompt_block_ids": ["demo-reference-024"],
+      "reference_block_ids": ["demo-reference-025", "demo-reference-026", "demo-reference-027", "demo-reference-028", "demo-reference-029", "demo-reference-030", "demo-reference-031", "demo-reference-032"],
+      "prompt": "如果模型训练出现稳定性问题，如何排查？",
+      "reference_text": "原文从 softmax 数值稳定、QK layer norm 和 logit soft-capping 三方面给出线索。",
+      "dependencies": [
+        {"kind": "media", "token": "demo-reference-033", "status": "verified", "sha256": "26161518d048e2872017bd571bac834d0331b17b6a90840a1bbd2d696c68c06e"},
+        {"kind": "media", "token": "demo-reference-034", "status": "verified", "sha256": "69f45ad1fce7c038c8bf98644c24e1f0f9d0aef20109140b95ba7fa64082977f"},
+        {"kind": "media", "token": "demo-reference-035", "status": "verified", "sha256": "2e012a492c4ff6f33d38c985bde1ac435db1765c469ed47e48078356ec39ef97"}
+      ],
+      "material_status": "complete",
+      "boundary_note": "稳定性小节中的文字和三张解释图为参考；下一 h3 各种注意力头开始新主题。"
+    },
+    {
+      "sample_id": "theory-arithmetic-intensity",
+      "document_id": "demo-theory-document",
+      "revision": "12089",
+      "question_type": "theory",
+      "category_path": "计算效率问题 > 算术强度",
+      "main_anchor_block_id": "demo-reference-036",
+      "prompt_block_ids": ["demo-reference-036"],
+      "reference_block_ids": ["demo-reference-037", "demo-reference-038", "demo-reference-039", "demo-reference-040", "demo-reference-041", "demo-reference-042"],
+      "prompt": "为什么更大的矩阵乘法通常有更高的算术强度，它何时受计算算力限制？",
+      "reference_text": "原文将耗时描述为计算时间与内存搬运时间的最大值，并用 FLOP/s 与 bytes/s 区分计算受限和内存受限。",
+      "dependencies": [
+        {"kind": "media", "token": "demo-reference-043", "status": "verified", "sha256": "ebe8ba97023a38c664b27bec9fe966038d44778e221488013c35b2d1dc4b57c9"},
+        {"kind": "sheet", "token": "demo-reference-044", "subresource_id": "A93Zsr", "revision": "9", "range": "A1:E4", "status": "verified"}
+      ],
+      "material_status": "candidate_requires_user_confirmation",
+      "boundary_note": "这是从疑问段和相邻说明适配出的题，不是独立题标题；按纯笔记政策留在候选区，不能自动发布。"
+    }
+  ]
+}

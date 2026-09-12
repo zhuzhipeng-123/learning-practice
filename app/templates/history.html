@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}历史 · 学习练习{% endblock %}
+{% block content %}
+<section>
+  <h2>作答历史</h2>
+  {% if attempts %}
+    {% for attempt in attempts %}
+      <article><h3>{{ attempt.prompt }}</h3><p>{{ attempt.submitted_at }} · {{ attempt.origin }}</p><a href="/practice/{{ attempt.task_id }}">查看作答与评价</a></article>
+    {% endfor %}
+  {% else %}<p>暂无正式提交。</p>{% endif %}
+</section>
+<section>
+  <h2>过去的复盘</h2><p><a href="/#daily-reflection">回到今天写复盘 →</a></p>
+  {% if reflections %}
+    {% for reflection in reflections %}
+      <article><h3>{{ reflection.activity_date }} · {{ reflection.author }}</h3>{% if reflection.stale %}<p>这份反思生成后记录有变化，需要更新。</p>{% endif %}{% if reflection.author == 'model' %}<button data-view-reflection="{{ reflection.id }}" data-output="reflection-{{ reflection.id }}">查看模型复盘</button><div id="reflection-{{ reflection.id }}" class="prose"></div>{% else %}<p>{{ reflection.content }}</p>{% endif %}</article>
+    {% endfor %}
+  {% else %}<p>暂无反思。</p>{% endif %}
+</section>
+
+{% endblock %}

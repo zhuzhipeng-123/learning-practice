@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block title %}秋招练习{% endblock %}{% block content %}
+<div class="page-heading"><div><h2>准备一场面试</h2><p class="muted">主问题由你选，回答后再逐步追问。</p></div></div>
+<section class="panel"><form id="interview-choice">
+<label>从哪里开始？<select id="interview-mode"><option value="bank">从题库选一道题</option><option value="custom">写我自己的面试题</option></select></label>
+<div id="bank-choice"><label>查找题目或模块<input id="question-search" placeholder="例如：Agent、PPO、链表"></label><label>主问题<select id="interview-question">{% for task in tasks %}<option value="{{ task.id }}">{{ task.category_path }} · {{ task.prompt }}</option>{% endfor %}</select></label><p id="question-count" class="muted"></p></div>
+<label id="custom-choice" hidden>我的主问题<textarea id="custom-question" rows="3" maxlength="4000" placeholder="例如：请让我介绍简历里的 Agent 项目，并围绕架构选择追问"></textarea></label>
+<label>岗位与希望重点考察的内容（可选）<textarea id="job-focus" rows="2" maxlength="2000" placeholder="填写你实际投递的岗位，或希望面试官关注的方面"></textarea></label>
+<button class="primary" type="submit">开始面试</button><p id="interview-result" role="status"></p>
+</form></section>
+<section class="panel"><h3>我的面试记录</h3>{% for session in sessions %}<div class="task-row"><div><h3>{{ session.prompt }}</h3><p class="muted">{{ '进行中' if session.status == 'active' else '已结束' }} · {{ session.turn_count }} 条对话</p></div><a class="button-link" href="/interview/{{ session.id }}">{{ '继续面试' if session.status == 'active' else '查看复盘' }}</a></div>{% else %}<p class="muted">还没有面试记录。</p>{% endfor %}</section><script src="/static/interview_setup.js"></script>{% endblock %}

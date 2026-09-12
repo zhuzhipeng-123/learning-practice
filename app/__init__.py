@@ -1,0 +1,1 @@
+"""Learning practice application package."""

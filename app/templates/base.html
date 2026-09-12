@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}学习练习{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/http.js"></script>
+  <script src="/static/model_text.js"></script>
+</head>
+<body data-local-date="{{ page_day }}">
+  <header>
+    <h1>学习练习</h1>
+    <nav>
+      <a href="/">今天</a>
+      <a href="/free-practice">自由练习</a>
+      <a href="/review">复习库</a>
+      <a href="/interview">秋招</a>
+      <a href="/history">历史</a>
+      <a href="/sources">题库与来源</a>
+      <a href="/settings">模型设置</a>
+    </nav>
+  </header>
+  <div id="new-day-notice" class="notice" hidden>新的一天开始了，当前输入已保留。保存后 <a href="/">前往今天 →</a></div><main>{% block content %}{% endblock %}</main>
+<script src="/static/rollover.js"></script><script src="/static/reflection_view.js"></script>
+</body>
+</html>

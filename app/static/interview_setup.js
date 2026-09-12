@@ -1,0 +1,8 @@
+(() => {
+const form=document.querySelector('#interview-choice'),mode=document.querySelector('#interview-mode'),select=document.querySelector('#interview-question'),search=document.querySelector('#question-search');
+const options=[...select.options].map(o=>({value:o.value,text:o.textContent}));let pending=null;
+function filter(){const query=search.value.trim().toLocaleLowerCase();const matched=options.filter(o=>o.text.toLocaleLowerCase().includes(query));select.replaceChildren(...matched.map(o=>new Option(o.text,o.value)));document.querySelector('#question-count').textContent=`找到 ${matched.length} 道题`;}
+search.addEventListener('input',filter);filter();
+mode.addEventListener('change',()=>{document.querySelector('#bank-choice').hidden=mode.value!=='bank';document.querySelector('#custom-choice').hidden=mode.value!=='custom';});
+form.addEventListener('submit',async event=>{event.preventDefault();const button=form.querySelector('button'),out=document.querySelector('#interview-result');const body={question_id:mode.value==='bank'?select.value:null,custom_question:mode.value==='custom'?document.querySelector('#custom-question').value:'',job_focus:document.querySelector('#job-focus').value};if(!pending||JSON.stringify(pending.body)!==JSON.stringify(body))pending={body,key:crypto.randomUUID()};button.disabled=true;out.textContent='正在准备面试…';try{const data=await readResponse(await fetch('/api/interviews/prepare',{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'learning-practice','Idempotency-Key':pending.key},body:JSON.stringify(body)}));location.href=`/interview/${data.session_id}`;}catch(error){out.textContent=error.message;}finally{button.disabled=false;}});
+})();
