@@ -171,6 +171,7 @@ def test_v4_upgrade_backfills_existing_evaluation_jobs(database):
     database.execute("DROP TABLE source_tree_member")
     database.execute("DROP TABLE alignment_run")
     database.execute("DROP TABLE interview_setup")
+    database.execute("DROP TABLE question_derivation")
     database.execute("DELETE FROM schema_version WHERE version>=5")
     database.commit()
     initialize_database(database)

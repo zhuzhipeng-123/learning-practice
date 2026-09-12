@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block title %}练习 · 学习练习{% endblock %}
 {% block content %}
-<article data-task-id="{{ task.id }}" data-question-id="{{ task.question_id }}" data-task-status="{{ task.status }}" data-question-type="{{ task.question_type }}">
+<article data-task-id="{{ task.id }}" data-question-id="{{ task.question_id }}" data-task-status="{{ task.status }}" data-question-type="{{ task.question_type }}" data-variant="{{ 'true' if derivation else 'false' }}">
   <p class="muted">{{ {'daily':'今日练习','free_practice':'自由练习','review':'复习','interview':'面试练习'}.get(task.origin,'练习') }} · {{ {'pending':'待练习','in_progress':'进行中','completed':'已完成','cancelled':'已从计划移出'}.get(task.status,task.status) }}</p>
-  <p class="muted">{{ task.category_path }}</p><h2>{{ task.prompt }}</h2>
+  <p class="muted">{{ task.category_path }}</p>{% if derivation %}<h2>{{ '代码' if task.question_type == 'code' else '八股' }}变种练习</h2><div class="prose" style="white-space:pre-wrap">{{ task.prompt }}</div>{% else %}<h2>{{ task.prompt }}</h2>{% endif %}
+  {% if derivation %}<p class="notice">模型变种题 · 基于「{{ derivation.prompt }}」。参考答案由模型生成，可在评价时自行核对和修正。</p>{% endif %}
   {% for material in materials if material.role == 'prompt' and material.kind == 'media' and material.status == 'complete' %}
     <img src="/api/tasks/{{ task.id }}/materials/{{ material.block_id }}" alt="题干原图" style="max-width:100%;height:auto">
   {% endfor %}
@@ -31,9 +32,9 @@
   {% else %}<p>这次任务已取消。</p>{% endif %}
   {% if task.question_type == 'theory' %}<button id="enter-review">加入复习库</button>{% endif %}
   {% if task.status != 'cancelled' %}<button id="show-reference">查看参考材料（会记录答案暴露）</button>{% endif %}
-  <section id="reference" hidden><h3>参考材料</h3><pre id="reference-text" style="white-space:pre-wrap"></pre><div id="reference-media"></div></section>
+  <section id="reference" hidden><h3>参考材料</h3><div id="reference-text" class="prose" style="white-space:pre-wrap"></div><div id="reference-media"></div></section>
   <pre id="result" hidden aria-live="polite" style="white-space:pre-wrap"></pre>
-  <p><a href="/">返回任务</a> · <a href="/review">进入复习库</a></p>
+  <p><a href="{{ '/free-practice' if task.origin == 'free_practice' else '/' }}">{{ '返回自由练习' if task.origin == 'free_practice' else '返回任务' }}</a> · <a href="/review">进入复习库</a></p>
 </article>
-<script src="/static/practice.js"></script>
+<script src="{{ asset_url('practice.js') }}"></script>
 {% endblock %}

@@ -16,7 +16,7 @@ def update_daily_plan(connection, plan_id, code_target, theory_target, module_qu
     plan = connection.execute('SELECT * FROM daily_plan WHERE id=?', (plan_id,)).fetchone()
     if not plan:
         raise ValueError('今日计划不存在')
-    rows = connection.execute("SELECT t.*,q.question_type,v.category_path,"
+    rows = connection.execute("SELECT t.*,q.question_type,q.source_status,v.category_path,"
         "(t.status!='pending' OR EXISTS(SELECT 1 FROM attempt a WHERE a.task_id=t.id) "
         "OR EXISTS(SELECT 1 FROM interview_session s WHERE s.task_id=t.id)) protected "
         "FROM task t JOIN question q ON q.id=t.question_id JOIN question_version v ON v.id=t.question_version_id "
@@ -33,10 +33,10 @@ def update_daily_plan(connection, plan_id, code_target, theory_target, module_qu
         if sum(needed.values()) > target - len(fixed):
             raise ValueError('已有作答属于其他模块，请减少指定模块题数，为已开始的题留出数量')
         for path, count in needed.items():
-            chosen = [r for r in group if r['id'] not in keep and _matches(r, path)][:count]
+            chosen = [r for r in group if r['id'] not in keep and r['source_status'] == 'active' and _matches(r, path)][:count]
             keep.update(r['id'] for r in chosen)
         flexible = target - len(fixed) - sum(needed.values())
-        extras = [r for r in group if r['id'] not in keep][:flexible]
+        extras = [r for r in group if r['id'] not in keep and r['source_status'] == 'active'][:flexible]
         keep.update(r['id'] for r in extras)
     cancelled = [r['id'] for r in rows if r['id'] not in keep]
     for task_id in cancelled:

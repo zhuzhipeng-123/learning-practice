@@ -1,13 +1,22 @@
 {% extends "base.html" %}
+{% from "task_rows.html" import rows %}
 {% block title %}自由练习 · 学习练习{% endblock %}
 {% block content %}
-<div class="page-heading"><div><h2>想练什么，就练什么</h2><p class="muted">挑一个薄弱点，也可以随机来几题。已在待办里的题不会重复加入。</p></div></div>
-<section class="panel"><form id="free-form">
+<div class="page-heading"><div><h2>想练什么，就练什么</h2><p class="muted">代码和八股分别抽题。选好数量，点击后才显示这次的题目。</p></div></div>
+{% include "heatmap_panel.html" %}
+<section class="panel">
+<label>题目来源<select id="free-source"><option value="original">从我的题库抽原题</option><option value="variant">让模型基于题库出变种题</option></select></label>
+<p id="generation-hint" class="muted" hidden>变种题每次最多3道，生成需要一些时间；保留原题来源。答案在练习页按需查看。</p>
 <label>练习方式<select id="free-mode"><option value="random">完全随机</option><option value="topic">我来描述范围</option></select></label>
-<label id="theme-label" hidden>想练哪些内容？<textarea id="theme" rows="3" maxlength="2000" placeholder="例如：我想练 Agent 的工具调用和 MCP，先不练强化学习"></textarea><small class="muted">模型理解你的描述，只从现有题库选题；不会临时编造原题。</small></label>
-<label>这次练几题 <input id="count" type="number" min="1" max="30" value="3" required></label>
+<label id="theme-label" hidden>想练哪些内容？<textarea id="theme" rows="3" maxlength="2000" placeholder="例如：代码练链表，八股练 Agent 的工具调用"></textarea><small class="muted">模型理解你的描述，只从现有题库选题。</small></label>
 <details><summary>更多选项</summary><label><input id="only-new" type="checkbox"> 只练没提交过的题</label></details>
-<button class="primary" id="create-free" type="submit">开始随机练习</button>
-</form><p id="free-status" role="status"></p><div id="free-result"></div></section>
-<section class="panel"><h3>自由练习待办</h3>{% for task in tasks %}<div class="task-row"><div><h3>{{ task.prompt }}</h3><p class="muted">{{ task.category_path }}</p></div><a class="button-link" href="/practice/{{ task.id }}">继续练习 →</a></div>{% else %}<p class="muted">暂时没有待办，选几题开始吧。</p>{% endfor %}</section>
-<script src="/static/free_practice.js"></script>{% endblock %}
+</section>
+{% for kind, label in [('code','代码'),('theory','八股')] %}
+<section class="panel" id="free-{{ kind }}"><h3>{{ label }}练习</h3>
+<form class="free-form" data-kind="{{ kind }}"><label>这次练几道{{ label }}题？<input class="free-count" type="number" min="1" max="30" value="{{ 1 if kind == 'code' else 3 }}" required></label><button class="primary" type="submit">随机抽{{ label }}题</button></form>
+<p class="free-status" role="status">点击抽题后，在这里开始练习。</p><div class="free-result" hidden></div>
+{% set pending = tasks | selectattr('question_type', 'equalto', kind) | list %}
+{% if pending %}<details class="previous-free"><summary>继续以前抽过的{{ label }}题 · {{ pending | length }} 题</summary>{{ rows(pending) }}</details>{% endif %}
+</section>
+{% endfor %}
+<script src="{{ asset_url('free_practice.js') }}"></script>{% endblock %}

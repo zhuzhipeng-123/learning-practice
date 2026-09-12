@@ -2,7 +2,7 @@
   const buttons = [...document.querySelectorAll('[data-align-source]')];
   const output = document.querySelector('#alignment-result');
   if (!output) return;
-  const labels = {added:'新增题目',updated:'修改题目',removed:'确认移除（历史保留）',missing:'原位置缺失，暂停新抽题待核验',restored:'恢复题目',modules_added:'新增目录 / 标题',modules_removed:'移除目录 / 标题',modules_updated:'调整目录 / 标题'};
+  const labels = {excluded:'不符合标题规则，停止新抽题（历史保留）',added:'新增题目',updated:'修改题目',removed:'确认移除（历史保留）',missing:'原位置缺失，暂停新抽题待核验',restored:'恢复题目',modules_added:'新增目录 / 标题',modules_removed:'移除目录 / 标题',modules_updated:'调整目录 / 标题'};
   const decisions = {single:'单题 / 多种解法',split:'建议拆题',note:'知识笔记',missing:'资料不足'};
   let timer, watching = false;
   function line(parent, tag, value) { const node=document.createElement(tag);node.textContent=value;parent.append(node);return node; }

@@ -28,6 +28,10 @@ def approve_candidate(connection, candidate_id: str, existing_question_id: str |
     if row is None:
         raise CandidateError("candidate is outdated or already decided; refresh the source page")
     value = json.loads(row["draft_json"])
+    if value['question_type'] == 'theory':
+        from app.services.theory_rules import candidate_heading_allowed
+        if not candidate_heading_allowed(connection, row['source_id'], row['main_anchor_block_id']):
+            raise CandidateError('八股题必须使用一级、二级或三级标题；请重新对齐题库')
     matches = value.get("match_question_ids", [])
     if matches and existing_question_id is None and not as_new:
         raise CandidateError("choose an existing question to preserve history, or explicitly create a new one")

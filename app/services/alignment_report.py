@@ -23,7 +23,7 @@ def source_inventory(connection, source_id):
 
 
 def inventory_changes(before, after):
-    result = {name: [] for name in ('added', 'updated', 'removed', 'missing', 'restored', 'modules_added', 'modules_removed', 'modules_updated')}
+    result = {name: [] for name in ('added', 'updated', 'removed', 'missing', 'restored', 'excluded', 'modules_added', 'modules_removed', 'modules_updated')}
     unchanged = 0
     for key, item in after['questions'].items():
         old = before['questions'].get(key)
@@ -38,7 +38,7 @@ def inventory_changes(before, after):
                                       'changed_fields': fields or ['图片 / 表格或引用边界']})
             changed = True
         if item['source_status'] != old['source_status']:
-            kind = {'source_deleted': 'removed', 'missing_pending': 'missing', 'active': 'restored'}.get(item['source_status'])
+            kind = {'source_deleted': 'removed', 'missing_pending': 'missing', 'active': 'restored', 'excluded_by_rule': 'excluded'}.get(item['source_status'])
             if kind:
                 result[kind].append(detail)
                 changed = True

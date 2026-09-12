@@ -66,6 +66,25 @@ class InterviewChoice(BaseModel):
     job_focus: str = Field(default='', max_length=2000)
 
 
+class InterviewDirection(BaseModel):
+    mode: Literal['suggest', 'opening']
+    direction: str = Field(default='', max_length=2000)
+    job_focus: str = Field(default='', max_length=2000)
+    avoid: list[str] = Field(default_factory=list, max_length=12)
+
+
+@router.post('/interviews/direction')
+def interview_direction(body: InterviewDirection, database: Database,
+                        idempotency_key: Annotated[str, Header(alias='Idempotency-Key')]):
+    from app.services.interview_setup import prepare_direction
+    try:
+        return prepare_direction(database, body.mode, body.direction, body.job_focus, body.avoid, idempotency_key)
+    except ModelJobError as error:
+        raise HTTPException(429 if error.retry_at else 502, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+
+
 @router.post('/interviews/prepare')
 def prepare_interview(body: InterviewChoice, database: Database, idempotency_key: Annotated[str, Header(alias='Idempotency-Key')]):
     from app.services.interview_setup import prepare_interview

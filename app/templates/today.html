@@ -1,8 +1,11 @@
 {% extends "base.html" %}
 {% block title %}今天 · 学习练习{% endblock %}
 {% from "module_tree.html" import tree %}
+{% from "task_rows.html" import rows %}
 {% block content %}
 <div class="page-heading"><div><p class="eyebrow">每天一点，留下积累</p><h2>今天学什么？</h2><p class="muted">{{ today }} · 按自己的节奏，练习、复盘、再进步。</p></div><a class="button-link" href="/settings">模型与提示词</a></div>
+{% include "heatmap_panel.html" %}
+{% include "reflection_panel.html" %}
 <div class="dashboard-columns">
 <section class="panel plan-panel">
   <div class="section-heading"><h3>安排今日练习</h3><span class="tag">随机抽题</span></div>
@@ -18,19 +21,18 @@
   <div id="plan-result" class="notice" role="status" hidden></div>
 </section>
 <aside>
-  <section class="panel"><h3>今日进度</h3>{% if current_plan %}<div class="progress-number">{{ current_plan.completed or 0 }}<span> / {{ current_plan.assigned }} 已完成</span></div><progress value="{{ current_plan.completed or 0 }}" max="{{ current_plan.assigned or 1 }}"></progress><p class="muted">日常目标 {{ current_plan.code_target + current_plan.theory_target }} · 额外练习 {{ current_plan.added_target }} · 已安排 {{ current_plan.assigned }}</p>{% else %}<p class="empty-state">为今天安排几道题，从一小步开始。</p>{% endif %}</section>
+  <section class="panel"><h3>今日计划进度</h3>{% if current_plan %}<div class="progress-number">{{ base_completed }}<span> / {{ base_tasks | length }} 已完成</span></div><progress value="{{ base_completed }}" max="{{ base_tasks | length or 1 }}"></progress><p class="muted">已保存目标：代码 {{ current_plan.code_target }} · 八股 {{ current_plan.theory_target }}</p><p class="muted">实际安排：代码 {{ base_counts.code }} · 八股 {{ base_counts.theory }}</p>{% else %}<p class="empty-state">选好题量并保存后，开始今天的练习。</p>{% endif %}</section>
   <section class="panel"><div class="section-heading"><h3>题库状态</h3><a href="/sources">管理 →</a></div><a class="button-link" href="/sources">查看模块 / 对齐更新 →</a><div id="source-summary">{% for source in sources %}<p><span class="status-dot {{ 'warning' if source.last_error or not source.last_check_at else '' }}"></span>{{ '八股' if source.question_type == 'theory' else '代码' }} · {{ '部分内容待确认' if source.last_error else '已同步' if source.last_check_at else '尚未同步' }}</p>{% endfor %}</div><p class="muted">飞书是原始题库，本地保留作答与复习记录。更新题库不会清空学习进度。</p></section>
 </aside>
 </div>
 
-<section class="panel"><div class="section-heading"><h3>今天的练习</h3><span class="muted">今天的任务与以前未完成的任务</span></div>
-{% for task in tasks %}<div class="task-row"><div><span class="tag">{{ '八股' if task.question_type == 'theory' else '代码' }}</span><span class="muted"> {{ {'pending':'待练习','in_progress':'进行中','completed':'已完成','cancelled':'已取消'}.get(task.status,task.status) }} · {{ '基础' if task.target_kind == 'base' else '追加' }}</span><h3>{{ task.prompt }}</h3></div><a class="button-link" href="/practice/{{ task.id }}">{{ '查看记录' if task.status == 'completed' else '继续练习' if task.status == 'in_progress' else '开始练习' }} →</a></div>{% else %}<div class="empty-state">还没有任务。选择题量，生成今天的第一组练习。</div>{% endfor %}
+<section class="panel" id="daily-practice">
+<div class="section-heading"><h3>今天的练习</h3><span id="saved-task-count" class="muted" hidden>代码 {{ base_counts.code }} · 八股 {{ base_counts.theory }} · 共 {{ base_tasks | length }} 题</span></div>
+<p id="unapplied-selection" class="notice" role="status">先选好题量并保存，再显示具体题目。</p>
+<div id="daily-task-list" hidden>{% for kind, label in [('code','代码练习'),('theory','八股练习')] %}<section id="daily-{{ kind }}"><h3>{{ label }} · {{ base_counts[kind] }} 题</h3>{{ rows(base_tasks | selectattr('question_type', 'equalto', kind) | list) }}{% if not base_counts[kind] %}<p class="muted">本次没有安排{{ '代码' if kind == 'code' else '八股' }}题。</p>{% endif %}</section>{% endfor %}{% if not base_tasks %}<p class="empty-state">{{ '当前没有安排题目；可调整题量或范围后保存。' if current_plan else '先选择题量，再点击安排练习。' }}</p>{% endif %}</div>
 </section>
-<section class="panel heatmap-panel"><div class="section-heading"><div><p class="eyebrow">看得见的坚持</p><h3>学习足迹</h3></div><p class="muted">近半年活跃 {{ heatmap.active_days }} 天 · {{ heatmap.activities }} 次主任务练习</p></div>
-<div class="heatmap-scroll"><div class="heatmap-days"><span>一</span><span>三</span><span>五</span><span>日</span></div><div class="heatmap-grid">{% for week in heatmap.weeks %}<div class="heatmap-week">{% for cell in week %}<a href="/days/{{ cell.date }}" class="heatmap-cell level-{{ cell.level }}" aria-label="{{ cell.date }}：{{ cell.total }} 次练习，代码 {{ cell.code }}，八股 {{ cell.theory }}" title="{{ cell.date }} · {{ cell.total }} 次练习"></a>{% endfor %}</div>{% endfor %}</div></div>
-<div class="heatmap-caption"><span>日期每天向前更新；提交后点亮当天。点击格子查看会与不会。</span><span class="legend">少 <i class="level-0"></i><i class="level-1"></i><i class="level-2"></i><i class="level-3"></i><i class="level-4"></i> 多</span></div>
-</section>
-{% include "reflection_panel.html" %}
+{% if older_tasks %}<details class="panel" id="older-practice"><summary>以前未完成 · {{ older_tasks | length }} 题</summary><p class="muted">可以随时继续，不占用今天的题量。</p>{{ rows(older_tasks) }}</details>{% endif %}
+
 <script id="saved-allocation" type="application/json">{{ allocation | tojson }}</script>
-<script src="/static/today.js"></script>
+<script src="{{ asset_url('today.js') }}"></script>
 {% endblock %}

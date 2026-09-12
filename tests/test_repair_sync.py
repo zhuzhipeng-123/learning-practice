@@ -40,10 +40,10 @@ def test_source_content_round_trip(database, unrelated_changes):
 
 def test_confirmed_theory_refreshes_without_reapproval(database, monkeypatch):
     live_theory(database)
-    run_live(database, monkeypatch, 1, [text_block("q", "Why?"), text_block("r", "A")])
+    run_live(database, monkeypatch, 1, [heading("q", 1, "Why?"), text_block("r", "A")])
     candidate = database.execute("SELECT id FROM parser_candidate").fetchone()[0]
     question_id = approve_candidate(database, candidate)
-    run_live(database, monkeypatch, 2, [text_block("q", "Why now?"), text_block("r", "B")])
+    run_live(database, monkeypatch, 2, [heading("q", 1, "Why now?"), text_block("r", "B")])
     row = database.execute("SELECT v.prompt,v.reference_text FROM question q JOIN question_version v ON v.id=q.current_version_id WHERE q.id=?", (question_id,)).fetchone()
     assert tuple(row) == ("Why now?", "B")
     assert database.execute("SELECT count(*) FROM question").fetchone()[0] == 1
@@ -52,9 +52,9 @@ def test_confirmed_theory_refreshes_without_reapproval(database, monkeypatch):
 
 def test_stale_candidate_cannot_overwrite_new_content(database, monkeypatch):
     live_theory(database)
-    run_live(database, monkeypatch, 1, [text_block("q", "Why?"), text_block("r", "A")])
+    run_live(database, monkeypatch, 1, [heading("q", 1, "Why?"), text_block("r", "A")])
     old = database.execute("SELECT id FROM parser_candidate").fetchone()[0]
-    run_live(database, monkeypatch, 2, [text_block("q", "Why?"), text_block("r", "B")])
+    run_live(database, monkeypatch, 2, [heading("q", 1, "Why?"), text_block("r", "B")])
     fresh = database.execute("SELECT id FROM parser_candidate WHERE status='pending'").fetchone()[0]
     approve_candidate(database, fresh)
     with pytest.raises(CandidateError):
@@ -64,10 +64,10 @@ def test_stale_candidate_cannot_overwrite_new_content(database, monkeypatch):
 
 def test_rebuilt_anchor_requires_explicit_identity_decision(database, monkeypatch):
     live_theory(database)
-    run_live(database, monkeypatch, 1, [text_block("old", "Why?"), text_block("r", "A")])
+    run_live(database, monkeypatch, 1, [heading("old", 1, "Why?"), text_block("r", "A")])
     question_id = approve_candidate(database, database.execute("SELECT id FROM parser_candidate").fetchone()[0])
     for revision in [2, 3]:
-        run_live(database, monkeypatch, revision, [text_block("new", "Why?"), text_block("r", "A")])
+        run_live(database, monkeypatch, revision, [heading("new", 1, "Why?"), text_block("r", "A")])
     candidate = database.execute("SELECT id FROM parser_candidate WHERE status='pending'").fetchone()[0]
     with pytest.raises(CandidateError):
         approve_candidate(database, candidate)
@@ -92,7 +92,7 @@ def test_publish_failure_rolls_back_snapshot_and_question(database, monkeypatch)
         raise RuntimeError("injected candidate failure")
     monkeypatch.setattr("app.services.source_sync._store_candidates", failure)
     with pytest.raises(RuntimeError):
-        run_live(database, monkeypatch, 1, [text_block("q", "Why?"), text_block("r", "A")])
+        run_live(database, monkeypatch, 1, [heading("q", 1, "Why?"), text_block("r", "A")])
     assert database.execute("SELECT count(*) FROM source_snapshot").fetchone()[0] == 0
     assert database.execute("SELECT status FROM sync_run").fetchone()[0] == "failed"
 

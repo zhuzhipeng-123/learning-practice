@@ -5,7 +5,7 @@ from dataclasses import replace
 from difflib import SequenceMatcher
 
 from app.domain import QuestionDraft
-from app.parsers.docx import HEADING_TYPES, block_text
+from app.parsers.docx import HEADING_TYPES, block_text, is_theory_heading
 
 
 def rebuild_bindings(connection, source, blocks, parsed):
@@ -20,6 +20,8 @@ def rebuild_bindings(connection, source, blocks, parsed):
     for binding in known:
         anchor = binding["main_anchor_block_id"]
         if anchor not in by_id:
+            continue
+        if source['question_type'] == 'theory' and not is_theory_heading(by_id[anchor]):
             continue
         current = discovered.get(anchor)
         # Recompute clear source boundaries so appended/deleted reference blocks are reflected.

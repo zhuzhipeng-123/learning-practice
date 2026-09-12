@@ -47,6 +47,7 @@ The authoritative design is `docs/original-learning-app-plan.md`. Do not treat t
 - A code answer of "cannot solve" completes the task and automatically enters review.
 - Theory questions enter review only after an explicit user action or instruction.
 - Free practice accepts the user's own topic description or samples uniformly from all eligible originals when random is selected, including previously practiced originals; pending tasks are excluded. A separate optional new-only filter is allowed. Model topic matching may select only supplied question IDs and cannot invent fallback questions.
+- Free practice may explicitly generate variants from eligible original text. Store variants as derived questions with frozen source-version and model-job provenance; never add them to the Feishu original pool. Keep references hidden until requested. Generation failures must not create partial tasks. Daily and free activity are counted separately, and free tasks never increase daily targets.
 - Daily tasks persist. Synchronization cannot redraw them, increase their target, clear completion, or change an in-progress attempt's version.
 - Preserve question identity and learning history across content changes. Important changes require a new review basis; old passes cannot silently validate it.
 - Source removal never deletes learning facts. Network, permission, pagination, parsing, or identity ambiguity never proves deletion.
@@ -54,8 +55,10 @@ The authoritative design is `docs/original-learning-app-plan.md`. Do not treat t
 - One interview main question is one task. Follow-ups do not increase the target. Derived questions are isolated from Feishu deletion logic.
 - Save an answer before model evaluation. Model failure leaves it pending and must not duplicate completion or valid passes.
 - User and model reflections are separate. Model claims must cite actual records and must not invent unseen code defects.
-- Place personal and model reflection at the end of today's practice. Model reflection focuses on actual wrong answers and adopted evaluations, with question context and actionable follow-up.
-- Interview entry lets the user choose an original or write a custom main question and optional job focus; never restrict choices to today's assigned tasks.
+- Place the heatmap and personal/model reflection at the beginning of the homepage; list code and theory practice in separate sections below the saved plan. Model reflection focuses on actual wrong answers and adopted evaluations, with question context and actionable follow-up.
+- Interview entry accepts a user-written direction or model-suggested random directions, with optional job focus. Generate an opening question for the chosen direction; do not offer a question-bank selector.
+- Homepage practice lists and progress reflect saved base code/theory targets only; extra practice belongs on its own pages. Free practice has separate code/theory draws and shows each new batch only after an explicit draw. Older free tasks are accessible in collapsed history. Changed daily inputs are unapplied until saved.
+- Theory question anchors must be H1, H2, or H3 headings. H4-H6 and ordinary paragraphs are reference content, never standalone questions. Empty container headings remain modules. Exclude legacy non-heading questions from future allocation without deleting tasks, versions, or answers.
 - Alignment accepts an optional user change description, retains it in the run report, and supplies it to model review. The description never proves deletion or replaces complete source discovery.
 - Default screens show learning outcomes, not API JSON, internal IDs, or provider configuration. Keep independent editable prompts in collapsed sections with purpose and output-budget rationale. Rollover refreshes clean pages on local-day change; dirty forms must retain text.
 

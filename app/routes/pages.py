@@ -1,7 +1,7 @@
 import json
 import sqlite3
 from datetime import date, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -41,27 +41,34 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
             "GROUP BY p.id ORDER BY p.plan_date DESC LIMIT 7"
         ).fetchall()
         tasks = database.execute(
-            "SELECT t.*, v.prompt, q.question_type FROM task t "
+            "SELECT t.*, v.prompt, q.question_type, (SELECT s.id FROM interview_session s WHERE s.task_id=t.id ORDER BY s.rowid DESC LIMIT 1) session_id FROM task t "
             "JOIN question q ON q.id=t.question_id "
             "JOIN question_version v ON v.id=t.question_version_id "
             "WHERE (t.plan_id=(SELECT id FROM daily_plan WHERE plan_date=?) "
-            "OR t.status IN ('pending','in_progress')) AND t.status!='cancelled' "
+            "OR t.status IN ('pending','in_progress')) AND t.status!='cancelled' AND t.target_kind='base' "
             "ORDER BY t.created_at, t.id",
             (today.isoformat(),),
         ).fetchall()
+        current_plan = next((dict(plan) for plan in plans if plan['plan_date'] == today.isoformat()), None)
+        plan_id = current_plan['id'] if current_plan else None
+        base_tasks = [task for task in tasks if task['plan_id'] == plan_id and task['target_kind'] == 'base']
+        older_tasks = [task for task in tasks if task['plan_id'] != plan_id]
+        base_counts = {kind: sum(task['question_type'] == kind for task in base_tasks) for kind in ('code', 'theory')}
         return templates.TemplateResponse(
             request=request,
             name="today.html",
             context=page_context(request, plans=plans, tasks=tasks, today=today,
+                                 base_tasks=base_tasks, older_tasks=older_tasks,
+                                 base_counts=base_counts, base_completed=sum(task['status'] == 'completed' for task in base_tasks),
                                  reflection=latest_reflections(database, today),
-                                 modules=module_tree(database), heatmap=heatmap(database, today), sources=source_status(database),
+                                 modules=module_tree(database), heatmap=heatmap(database, today, 'daily'), sources=source_status(database),
                                  allocation=next((json.loads(plan["allocation_json"]) for plan in plans if plan["plan_date"] == today.isoformat()), {}),
-                                 current_plan=next((dict(plan) for plan in plans if plan["plan_date"] == today.isoformat()), None)),
+                                 current_plan=current_plan),
         )
 
     @router.get("/days/{day}", response_class=HTMLResponse)
-    def day_page(day: date, request: Request, database: Database):
-        return templates.TemplateResponse(request=request, name="day.html", context=page_context(request, **day_details(database, day)))
+    def day_page(day: date, request: Request, database: Database, scope: Literal['all', 'daily', 'free_practice', 'review', 'interview'] = 'all'):
+        return templates.TemplateResponse(request=request, name="day.html", context=page_context(request, **day_details(database, day, scope)))
 
     @router.get("/practice/{task_id}", response_class=HTMLResponse)
     def practice_page(task_id: str, request: Request, database: Database):
@@ -84,7 +91,8 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
         return templates.TemplateResponse(
             request=request,
             name="practice.html",
-            context=page_context(request, task=task, materials=materials, latest=latest, job=job),
+            context=page_context(request, task=task, materials=materials, latest=latest, job=job,
+                derivation=database.execute('SELECT v.prompt FROM question_derivation d JOIN question_version v ON v.id=d.base_version_id WHERE d.question_id=?', (task['question_id'],)).fetchone()),
         )
 
     @router.get("/free-practice", response_class=HTMLResponse)
@@ -95,7 +103,7 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
         return templates.TemplateResponse(
             request=request,
             name="free_practice.html",
-            context=page_context(request, plans=plans, tasks=database.execute("SELECT t.id,t.status,v.prompt,v.category_path FROM task t JOIN question_version v ON v.id=t.question_version_id WHERE t.origin='free_practice' AND t.status IN ('pending','in_progress') ORDER BY t.rowid DESC").fetchall()),
+            context=page_context(request, plans=plans, heatmap=heatmap(database, local_today(), 'free_practice'), tasks=database.execute("SELECT t.id,t.status,v.prompt,v.category_path,q.question_type FROM task t JOIN question_version v ON v.id=t.question_version_id JOIN question q ON q.id=t.question_id WHERE t.origin='free_practice' AND t.status IN ('pending','in_progress') ORDER BY t.rowid DESC").fetchall()),
         )
 
     @router.get("/interview", response_class=HTMLResponse)
@@ -106,12 +114,10 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
             "LEFT JOIN interview_turn t ON t.session_id=s.id "
             "GROUP BY s.id ORDER BY s.created_at DESC"
         ).fetchall()
-        tasks = database.execute("SELECT q.id,v.prompt,v.category_path FROM question q JOIN question_version v ON v.id=q.current_version_id "
-                                 "WHERE q.source_status='active' AND v.material_status IN ('complete','verified','text_complete') ORDER BY v.category_path,v.prompt").fetchall()
         return templates.TemplateResponse(
             request=request,
             name="interview.html",
-            context=page_context(request, sessions=sessions, tasks=tasks),
+            context=page_context(request, sessions=sessions),
         )
 
     @router.get("/interview/{session_id}", response_class=HTMLResponse)

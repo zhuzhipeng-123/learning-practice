@@ -79,6 +79,8 @@ class ReviewRequest(BaseModel):
 
 
 class FreePracticeRequest(BaseModel):
+    question_source: Literal['original', 'variant'] = 'original'
+    question_type: Literal['code', 'theory'] | None = None
     plan_id: str | None = None
     theme: str = Field(default='', max_length=2000)
     count: int = Field(gt=0, le=30)
@@ -304,11 +306,23 @@ def create_free_practice(
 ):
     if body.mode == 'topic' and not body.theme.strip():
         raise HTTPException(422, '请描述想练的内容，或选择完全随机')
+    if body.question_source == 'variant' and (not body.question_type or body.count > 3):
+        raise HTTPException(422, '变种题请选择代码或八股，每次生成1至3道')
     try:
-        selected = select_by_description(database, body.theme, body.count, idempotency_key, body.only_new) if body.mode == 'topic' else None
+        selected = select_by_description(database, body.theme, body.count, idempotency_key, body.only_new, question_type=body.question_type) if body.mode == 'topic' else None
     except (ValueError, ModelJobError) as error:
         raise HTTPException(409, str(error)) from error
     plan_id = body.plan_id or _get_or_create_plan(database, local_today(), idempotency_key)['plan_id']
+    if body.question_source == 'variant':
+        from app.services.practice_generation import generate_variants
+        try:
+            result = generate_variants(database, plan_id, body.theme if body.mode == 'topic' else '', body.count,
+                                       body.question_type, body.only_new, idempotency_key, selected)
+        except ModelJobError as error:
+            raise HTTPException(429 if error.retry_at else 502, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        return {**result, 'tasks': _free_cards(database, result['task_ids'])}
     result = add_free_practice(
         database,
         plan_id,
@@ -319,6 +333,13 @@ def create_free_practice(
         used_cache=True,
         selected_ids=selected,
         only_new=body.only_new,
+        question_type=body.question_type,
     )
-    cards = [dict(database.execute('SELECT t.id,v.prompt,v.category_path,q.question_type FROM task t JOIN question_version v ON v.id=t.question_version_id JOIN question q ON q.id=t.question_id WHERE t.id=?', (task_id,)).fetchone()) for task_id in result.task_ids]
-    return {**result.__dict__, 'tasks': cards}
+    return {**result.__dict__, 'tasks': _free_cards(database, result.task_ids)}
+
+
+def _free_cards(database, task_ids):
+    return [dict(database.execute('SELECT t.id,v.prompt,v.category_path,q.question_type,EXISTS '
+        '(SELECT 1 FROM question_derivation d WHERE d.question_id=q.id) is_variant FROM task t '
+        'JOIN question_version v ON v.id=t.question_version_id JOIN question q ON q.id=t.question_id '
+        'WHERE t.id=?', (task_id,)).fetchone()) for task_id in task_ids]

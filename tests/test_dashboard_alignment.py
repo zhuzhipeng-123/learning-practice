@@ -54,7 +54,7 @@ def test_ten_days_visible_and_every_day_clickable():
             homepage = client.get('/')
             assert homepage.status_code == 200
             for cell in active:
-                assert f'href="/days/{cell["date"]}"' in homepage.text
+                assert f'href="/days/{cell["date"]}?scope=daily"' in homepage.text
                 response = client.get('/days/' + cell['date'])
                 assert response.status_code == 200 and 'Move zeroes' in response.text
             client.get('/')
@@ -98,17 +98,17 @@ def test_fill_preserves_existing_tasks_and_original_target(database):
 
 def test_alignment_tracks_details_and_keeps_completed_history(database, monkeypatch):
     live_theory(database)
-    raw = [heading('module', 1, 'LLM'), text_block('q', 'Why?'), text_block('r', 'Old reference')]
+    raw = [heading('module', 1, 'LLM'), heading('q', 3, 'Why?'), text_block('r', 'Old reference')]
     first = run_live(database, monkeypatch, 1, raw)
     assert len(first['changes']['added']) == 1
     plan = create_daily_plan(database, date(2026, 9, 1), 0, 1, {}, 'plan')
     old = plan['tasks'][0]
     database.execute("UPDATE task SET status='completed' WHERE id=?", (old['id'],))
     database.commit()
-    changed = [heading('module', 1, 'New LLM'), text_block('q', 'Why?'), text_block('new-ref', 'New reference')]
+    changed = [heading('module', 1, 'New LLM'), heading('q', 3, 'Why?'), text_block('new-ref', 'New reference')]
     result = run_live(database, monkeypatch, 2, changed)
     assert len(result['changes']['updated']) == 1
-    assert result['changes']['modules_updated'] == [{'before': 'LLM', 'after': 'New LLM'}]
+    assert result['changes']['modules_updated'] == [{'before': 'LLM', 'after': 'New LLM'}, {'before': 'LLM > Why?', 'after': 'New LLM > Why?'}]
     assert database.execute('SELECT question_version_id,status FROM task').fetchone()[:] == (old['question_version_id'], 'completed')
     assert database.execute('SELECT reference_text FROM question_version WHERE id=?', (old['question_version_id'],)).fetchone()[0] == 'Old reference'
     again = run_live(database, monkeypatch, 2, changed)
@@ -129,7 +129,7 @@ def test_ambiguous_absence_suspends_without_deleting_history(database):
 
 def test_alignment_includes_model_analysis_and_persists_failure(database, monkeypatch):
     live_theory(database)
-    result = run_live(database, monkeypatch, 1, [text_block('q', 'Why?'), text_block('r', 'Reference')])
+    result = run_live(database, monkeypatch, 1, [heading('q', 1, 'Why?'), text_block('r', 'Reference')])
     def reply(messages, **kwargs):
         payload = json.loads(messages[1]['content'])
         suggestions = [{'anchor_id': item['anchor_id'], 'decision': 'single', 'reason': 'one question', 'parts': []} for item in payload['candidates']]
@@ -179,7 +179,7 @@ def test_day_details_uses_only_adopted_theory_verdict(database):
 
 def test_alignment_retries_malformed_json_only_once(database, monkeypatch):
     live_theory(database)
-    result = run_live(database, monkeypatch, 1, [text_block('q', 'Why?'), text_block('r', 'Reference')])
+    result = run_live(database, monkeypatch, 1, [heading('q', 1, 'Why?'), text_block('r', 'Reference')])
     calls = []
     def reply(messages, **kwargs):
         calls.append(messages)

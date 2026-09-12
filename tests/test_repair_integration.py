@@ -16,7 +16,7 @@ from app.services.source_sync import SyncSupersededError, sync_registered_source
 from app.services.tasks import create_daily_plan
 from app.storage.database import SCHEMA_PATH, connect_database, initialize_database
 from app.storage.migrations import CURRENT_VERSION
-from tests.test_docx_parser import text_block
+from tests.test_docx_parser import heading, text_block
 from tests.test_practice_review import make_plan, seed_question
 from tests.test_repair_business import submitted_theory
 from tests.test_repair_sync import live_theory, run_live
@@ -135,8 +135,8 @@ def test_future_schema_rejected_without_creating_tables(tmp_path):
 
 def test_older_sync_cannot_replace_newer_published_snapshot(database, monkeypatch):
     live_theory(database)
-    old = [text_block('q', 'Why?'), text_block('r', 'old')]
-    new = [text_block('q', 'Why?'), text_block('r', 'new')]
+    old = [heading('q', 1, 'Why?'), text_block('r', 'old')]
+    new = [heading('q', 1, 'Why?'), text_block('r', 'new')]
     from app.adapters.docx_reader import DocxReader
     called = False
 
@@ -158,7 +158,7 @@ def test_older_sync_cannot_replace_newer_published_snapshot(database, monkeypatc
 def test_rejected_candidate_does_not_keep_source_partial(database, monkeypatch):
     from app.services.candidates import reject_candidate
     live_theory(database)
-    blocks = [text_block('q', 'Why?'), text_block('r', 'answer')]
+    blocks = [heading('q', 1, 'Why?'), text_block('r', 'answer')]
     run_live(database, monkeypatch, 1, blocks)
     reject_candidate(database, database.execute('SELECT id FROM parser_candidate').fetchone()[0])
     assert run_live(database, monkeypatch, 1, blocks)['partial'] is False

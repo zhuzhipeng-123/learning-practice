@@ -6,8 +6,8 @@ from app.services.model_json import parse_model_json
 from app.services.module_jobs import run_module_job
 
 
-def select_by_description(connection, description, count, request_key, only_new=False, client=None):
-    rows = find_new_originals(connection, '', only_new)
+def select_by_description(connection, description, count, request_key, only_new=False, client=None, question_type=None):
+    rows = find_new_originals(connection, '', only_new, question_type)
     if not rows:
         return []
     context = {'source_id': 'practice:' + request_key, 'description': description, 'count': count,

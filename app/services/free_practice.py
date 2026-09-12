@@ -28,18 +28,20 @@ def find_new_originals(
     connection: sqlite3.Connection,
     theme: str,
     only_new: bool = True,
+    question_type: str | None = None,
 ) -> list[sqlite3.Row]:
     """Find eligible originals without allowing generated fallback questions."""
     terms = THEME_ALIASES.get(theme.lower(), (theme,))
     rows = connection.execute(
-        "SELECT q.id, v.prompt, v.reference_text, v.category_path "
+        "SELECT q.id, q.question_type, v.id version_id, v.prompt, v.reference_text, v.category_path "
         "FROM question q JOIN question_version v ON v.id=q.current_version_id "
         "WHERE q.source_kind='feishu' AND q.source_status='active' "
         "AND v.material_status IN ('complete','verified','text_complete') "
         "AND (?=0 OR q.first_submitted_at IS NULL) "
+        "AND (? IS NULL OR q.question_type=?) "
         "AND NOT EXISTS (SELECT 1 FROM task t WHERE t.question_id=q.id "
         "AND t.status IN ('pending', 'in_progress'))",
-        (int(only_new),),
+        (int(only_new), question_type, question_type),
     ).fetchall()
     return [row for row in rows if _matches(row, terms)]
 
@@ -56,8 +58,13 @@ def add_free_practice(
     random_seed: int | None = None,
     selected_ids: list[str] | None = None,
     only_new: bool = True,
+    question_type: str | None = None,
 ) -> FreePracticeResult:
     payload = {"plan_id": plan_id, "theme": theme, "count": count, 'only_new': only_new}
+    if question_type is not None:
+        if question_type not in {'code', 'theory'}:
+            raise ValueError('请选择代码或八股')
+        payload['question_type'] = question_type
     previous = _load_idempotent(connection, request_key, "free_practice", payload)
     if previous is not None:
         return FreePracticeResult(**previous)
@@ -65,7 +72,7 @@ def add_free_practice(
         raise ValueError("count must be positive")
     if not source_checked:
         raise ValueError("free practice requires a source freshness check")
-    candidates = find_new_originals(connection, '' if selected_ids is not None else theme, only_new)
+    candidates = find_new_originals(connection, '' if selected_ids is not None else theme, only_new, question_type)
     if selected_ids is not None:
         candidates = [row for row in candidates if row['id'] in selected_ids]
     generator = random.Random(random_seed)

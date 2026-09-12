@@ -26,6 +26,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES = Jinja2Templates(directory=PROJECT_ROOT / "app" / "templates")
 
 
+def asset_url(name):
+    version = (PROJECT_ROOT / 'app' / 'static' / name).stat().st_mtime_ns
+    return f'/static/{name}?v={version}'
+
+
+TEMPLATES.env.globals['asset_url'] = asset_url
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize the local database before serving requests."""

@@ -3,6 +3,7 @@
 {% block content %}
 <a href="/">← 返回今天</a>
 <div class="page-heading"><div><p class="eyebrow">学习日历</p><h2>{{ day }}</h2><p class="muted">按实际作答日期归档，昨天的任务今天做，也记在今天。</p></div></div>
+<p>查看范围：<a href="/days/{{ day }}?scope=daily">每日练习</a> · <a href="/days/{{ day }}?scope=free_practice">自由练习</a> · <a href="/days/{{ day }}">全部记录</a>。当前：{{ {'daily':'每日练习','free_practice':'自由练习','review':'复习','interview':'面试','all':'全部记录'}[scope] }}</p>
 <div class="stat-grid">
 <article><span>实际练习</span><strong>{{ activity.total }}</strong><small>代码 {{ activity.code }} · 八股 {{ activity.theory }}</small></article>
 <article><span>首次完成任务</span><strong>{{ completed }}</strong><small>同一任务只记一次完成</small></article>
@@ -12,7 +13,7 @@
 <p class="muted">按当天每个任务的最后一条作答汇总。代码看你的自评，八股看当前采用的评价；之后重新评价会更新这里，不等同于长期掌握。</p>
 {% for key,label in [('can','会 / 评价通过'),('cannot','不会 / 需要复习'),('pending','已作答，待评价'),('unknown','暂时无法判断')] %}
 <details class="day-outcome" open><summary>{{ label }} · {{ groups[key]|length }} 题</summary>
-{% for attempt in groups[key] %}<div class="task-row"><div><span class="tag">{{ '八股' if attempt.question_type == 'theory' else '代码' }}</span><h3>{{ attempt.prompt }}</h3><p class="muted">{{ attempt.category_path }} · {{ '我的自评' if attempt.question_type == 'code' else '已采用的评价' if attempt.verdict else '回答已保存，尚无评价' }}</p></div><a class="button-link" href="/practice/{{ attempt.task_id }}">查看作答</a></div>{% else %}<p class="muted">暂无。</p>{% endfor %}
+{% for attempt in groups[key] %}<div class="task-row"><div><span class="tag">{{ '八股' if attempt.question_type == 'theory' else '代码' }}</span><span class="muted"> · {{ {'daily':'每日练习','free_practice':'自由练习','review':'复习','interview':'面试'}.get(attempt.origin, '练习') }}</span><h3>{{ attempt.prompt }}</h3><p class="muted">{{ attempt.category_path }} · {{ '我的自评' if attempt.question_type == 'code' else '已采用的评价' if attempt.verdict else '回答已保存，尚无评价' }}</p></div><a class="button-link" href="/practice/{{ attempt.task_id }}">查看作答</a></div>{% else %}<p class="muted">暂无。</p>{% endfor %}
 </details>{% endfor %}</section>
 <section class="panel"><h3>面试练习</h3><p class="muted">面试是否会，结合会话中的总结判断；有回答记录不自动算作掌握。</p>{% for item in interviews %}<div class="task-row"><div><h3>{{ item.prompt }}</h3><p>当天回答 {{ item.answers }} 次</p></div><a href="/interview/{{ item.id }}">查看会话</a></div>{% else %}<p class="muted">当天没有面试回答。</p>{% endfor %}</section>
 <section class="panel"><h3>当天反思</h3>{% for item in reflections %}<h4>{{ '我的反思' if item.author == 'user' else '模型反思' }}{{ ' · 有新记录待更新' if item.stale else '' }}</h4>{% if item.author == 'model' %}<button data-view-reflection="{{ item.id }}" data-output="reflection-{{ item.id }}">查看模型复盘</button><div id="reflection-{{ item.id }}" class="prose"></div>{% else %}<pre>{{ item.content }}</pre>{% endif %}{% else %}<p class="muted">还没有反思记录。</p>{% endfor %}<a href="/#daily-reflection">写今天的复盘</a> · <a href="/history">查看历史</a></section>

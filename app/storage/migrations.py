@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.storage.transactions import transaction
 
-CURRENT_VERSION = 7
+CURRENT_VERSION = 8
 MIGRATION_2 = [
     ("CREATE TABLE answer_exposure (attempt_id TEXT NOT NULL REFERENCES attempt(id),"
      "happened_at TEXT NOT NULL, PRIMARY KEY(attempt_id,happened_at))"),
@@ -50,6 +50,11 @@ MIGRATION_6 = [
 
 MIGRATION_7 = ["CREATE TABLE interview_setup(session_id TEXT PRIMARY KEY REFERENCES interview_session(id), job_focus TEXT NOT NULL)"]
 
+MIGRATION_8 = [
+    ("CREATE TABLE question_derivation(question_id TEXT PRIMARY KEY REFERENCES question(id), "
+     "base_version_id TEXT NOT NULL REFERENCES question_version(id), model_job_id TEXT NOT NULL REFERENCES model_job(id))"),
+]
+
 
 def migrate(connection, backup=True):
     version = connection.execute("SELECT COALESCE(MAX(version),0) FROM schema_version").fetchone()[0]
@@ -63,7 +68,7 @@ def migrate(connection, backup=True):
         with closing(sqlite3.connect(backup_path)) as destination:
             connection.backup(destination)
     with transaction(connection):
-        for target, statements in ((2, MIGRATION_2), (3, MIGRATION_3), (4, MIGRATION_4), (5, MIGRATION_5), (6, MIGRATION_6), (7, MIGRATION_7)):
+        for target, statements in ((2, MIGRATION_2), (3, MIGRATION_3), (4, MIGRATION_4), (5, MIGRATION_5), (6, MIGRATION_6), (7, MIGRATION_7), (8, MIGRATION_8)):
             if version < target:
                 for statement in statements:
                     connection.execute(statement)

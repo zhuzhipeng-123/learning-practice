@@ -52,7 +52,7 @@ def reflection_context(connection, day):
 
 
 def run_module_job(connection, module, target, request_key, client=None, context_override=None):
-    if module not in {"interview_followup", "interview_feedback", "daily_reflection", "source_parsing", "practice_selection"}:
+    if module not in {"practice_generation", "interview_preparation", "interview_followup", "interview_feedback", "daily_reflection", "source_parsing", "practice_selection"}:
         raise ModelJobError("不支持的模型模块")
     with transaction(connection):
         business_key = f"{module}:{request_key}"
@@ -63,7 +63,7 @@ def run_module_job(connection, module, target, request_key, client=None, context
             if saved.get("activity_date", saved.get("session_id", saved.get("source_id"))) != target:
                 raise ModelJobError("同一请求标识不能用于不同对象")
         else:
-            if module in {'source_parsing', 'practice_selection'}:
+            if module in {'source_parsing', 'practice_selection', 'interview_preparation', 'practice_generation'}:
                 from app.services.source_coverage import parsing_context
                 context = context_override or parsing_context(connection, target)
             else:
@@ -105,6 +105,14 @@ def _load_request(connection, job_id):
 
 def _save_result(connection, module, context, text):
     now = datetime.now(UTC)
+    if module == 'practice_generation':
+        from app.services.practice_generation import validate_variants
+        validate_variants(context, parse_model_json(text))
+        return new_id('generation')
+    if module == 'interview_preparation':
+        from app.services.interview_setup import validate_preparation
+        validate_preparation(context, parse_model_json(text))
+        return new_id('preparation')
     if module == 'practice_selection':
         from app.services.practice_selection import validate_selection
         validate_selection(context, parse_model_json(text))

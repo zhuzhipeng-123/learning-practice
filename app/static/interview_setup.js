@@ -1,8 +1,34 @@
 (() => {
-const form=document.querySelector('#interview-choice'),mode=document.querySelector('#interview-mode'),select=document.querySelector('#interview-question'),search=document.querySelector('#question-search');
-const options=[...select.options].map(o=>({value:o.value,text:o.textContent}));let pending=null;
-function filter(){const query=search.value.trim().toLocaleLowerCase();const matched=options.filter(o=>o.text.toLocaleLowerCase().includes(query));select.replaceChildren(...matched.map(o=>new Option(o.text,o.value)));document.querySelector('#question-count').textContent=`找到 ${matched.length} 道题`;}
-search.addEventListener('input',filter);filter();
-mode.addEventListener('change',()=>{document.querySelector('#bank-choice').hidden=mode.value!=='bank';document.querySelector('#custom-choice').hidden=mode.value!=='custom';});
-form.addEventListener('submit',async event=>{event.preventDefault();const button=form.querySelector('button'),out=document.querySelector('#interview-result');const body={question_id:mode.value==='bank'?select.value:null,custom_question:mode.value==='custom'?document.querySelector('#custom-question').value:'',job_focus:document.querySelector('#job-focus').value};if(!pending||JSON.stringify(pending.body)!==JSON.stringify(body))pending={body,key:crypto.randomUUID()};button.disabled=true;out.textContent='正在准备面试…';try{const data=await readResponse(await fetch('/api/interviews/prepare',{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'learning-practice','Idempotency-Key':pending.key},body:JSON.stringify(body)}));location.href=`/interview/${data.session_id}`;}catch(error){out.textContent=error.message;}finally{button.disabled=false;}});
+const form = document.querySelector('#interview-choice');
+const mode = document.querySelector('#interview-mode');
+const direction = document.querySelector('#interview-direction');
+const output = document.querySelector('#interview-result');
+const suggest = document.querySelector('#suggest-directions');
+let recent = [], pending = null;
+mode.addEventListener('change', () => {
+  document.querySelector('#random-directions').hidden = mode.value !== 'random';
+});
+async function request(action) {
+  const body = {mode: action, direction: action === 'opening' ? direction.value : '', job_focus: document.querySelector('#job-focus').value, avoid: action === 'suggest' ? recent : []};
+  if (!pending || JSON.stringify(pending.body) !== JSON.stringify(body)) pending = {body, key: crypto.randomUUID()};
+  const buttons = form.querySelectorAll('button, input, textarea, select');
+  buttons.forEach(button => button.disabled = true);
+  output.textContent = action === 'suggest' ? '正在想几个不同的练习方向…' : '正在围绕你的方向准备第一问…';
+  try {
+    const data = await readResponse(await fetch('/api/interviews/direction', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Requested-With': 'learning-practice', 'Idempotency-Key': pending.key}, body: JSON.stringify(body)}));
+    pending = null;
+    if (action === 'opening') { location.href = `/interview/${data.session_id}`; return; }
+    recent = [...recent, ...data.directions].slice(-12);
+    document.querySelector('#direction-options').replaceChildren(...data.directions.map(text => {
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = text;
+      button.addEventListener('click', () => { direction.value = text; direction.dispatchEvent(new Event('input', {bubbles: true})); output.textContent = '已选方向，可以改写或开始面试。'; });
+      return button;
+    }));
+    suggest.textContent = '换一组方向';
+    output.textContent = '选择一个方向，或按自己的想法改写。';
+  } catch (error) { output.textContent = error.message; }
+  finally { buttons.forEach(button => button.disabled = false); }
+}
+suggest.addEventListener('click', () => request('suggest'));
+form.addEventListener('submit', event => { event.preventDefault(); request('opening'); });
 })();

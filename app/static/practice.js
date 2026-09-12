@@ -37,11 +37,19 @@ async function ensureStarted() {
 if (card.dataset.taskStatus === 'pending') ensureStarted().catch(error => show(error.message));
 
 async function submit(path, values) {
+  if ('answer_text' in values && !values.answer_text.trim()) {
+    show('请先填写回答，再保存。');
+    return;
+  }
   const buttons = document.querySelectorAll("[data-code-result],#submit-theory");
   buttons.forEach(button => button.disabled = true);
   try {
     await ensureStarted();
     let pending = JSON.parse(sessionStorage.getItem(storageKey) || "null");
+    if (pending && pending.values.answer_text === '') {
+      sessionStorage.removeItem(storageKey);
+      pending = null;
+    }
     if (pending && JSON.stringify(pending.values) !== JSON.stringify(values)) {
       throw new Error("上次提交结果尚未确认。请先恢复原答案重试，或刷新查看保存结果。");
     }
@@ -81,7 +89,9 @@ function action(selector, operation) {
 action("#show-reference", async () => {
   await ensureStarted();
   const data = await request(`/api/tasks/${taskId}/expose-answer`, {exposed_at: new Date().toISOString()});
-  document.querySelector("#reference-text").textContent = data.reference_text || "参考材料不足";
+  const reference = document.querySelector("#reference-text");
+  if (card.dataset.variant === 'true') renderModelText(reference, data.reference_text || '参考材料不足');
+  else reference.textContent = data.reference_text || '参考材料不足';
   const media = document.querySelector("#reference-media");
   media.replaceChildren();
   for (const item of data.materials) {

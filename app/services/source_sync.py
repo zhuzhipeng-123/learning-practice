@@ -14,7 +14,7 @@ from app.services.wiki_sources import source_prefix
 from app.storage.ids import new_id
 from app.storage.transactions import transaction
 
-PARSER_VERSION = "wiki-heading-question-boundaries-v4"
+PARSER_VERSION = "theory-h1-h3-v5"
 
 
 class SyncSupersededError(SyncIntegrityError):
@@ -64,6 +64,8 @@ def sync_registered_source(connection, source_id: str, client=None):
                 connection.execute("UPDATE question SET source_status='missing_pending' WHERE id IN "
                                    "(SELECT question_id FROM source_binding WHERE source_id=? AND main_anchor_block_id=?)",
                                    (source_id, anchor))
+            from app.services.theory_rules import exclude_ineligible_anchors
+            excluded = exclude_ineligible_anchors(connection, source, result.blocks)
             summary = {**published, "revision": result.revision, "candidate_count": pending_count,
                        "published_count": connection.execute("SELECT COUNT(*) FROM question q WHERE q.source_status='active' AND EXISTS "
                             "(SELECT 1 FROM source_binding b WHERE b.question_id=q.id AND b.source_id=?)", (source_id,)).fetchone()[0],
@@ -72,7 +74,7 @@ def sync_registered_source(connection, source_id: str, client=None):
                        "unsupported_block_count": len(parsed.unsupported_block_ids), "missing": missing,
                        "material_failures": sum(item["status"] != "complete" for item in materials.values()),
                        "material_errors": sorted({item["error"] for item in materials.values() if "error" in item}),
-                       "boundary_failures": sorted(invalid)}
+                       "boundary_failures": sorted(invalid), "excluded_by_heading_rule": excluded}
             partial = ambiguous or incomplete
             summary["partial"] = partial
             connection.execute(

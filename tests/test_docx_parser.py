@@ -51,7 +51,7 @@ def test_compound_code_heading_requires_confirmation() -> None:
 def test_clear_theory_question_with_category_and_reference_is_published() -> None:
     blocks = [
         heading("category", 2, "计算效率"),
-        text_block("question", "为什么要预热？"),
+        heading("question", 3, "为什么要预热？"),
         text_block("answer", "排除延迟编译时间。"),
     ]
 
