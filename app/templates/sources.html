@@ -45,6 +45,7 @@
         <summary>{{ candidate.draft.prompt }}</summary>
         <p>{{ candidate.draft.category_path }} · {{ candidate.main_anchor_block_id }}</p>
         <p>{{ candidate.draft.reference_text or "参考材料不足" }}</p>
+        {% if candidate.draft.material_status == 'incomplete_reference' %}<p class="notice">参考内容未完整读取，暂不能确认入库。请检查飞书原文中的表格或特殊内容，补全后重新对齐。</p>{% endif %}
         {% if candidate.draft.match_question_ids %}
         <label>可能是已有题目的移动或重建，请确认身份
           <select data-candidate-match="{{ candidate.id }}">
@@ -54,7 +55,7 @@
           </select>
         </label>
         {% endif %}
-        <button data-candidate-action="approve" data-candidate-id="{{ candidate.id }}">确认入题库</button>
+        <button data-candidate-action="approve" data-candidate-id="{{ candidate.id }}" {{ 'disabled' if candidate.draft.material_status == 'incomplete_reference' }}>确认入题库</button>
         <button data-candidate-action="reject" data-candidate-id="{{ candidate.id }}">忽略</button>
         <p data-candidate-result="{{ candidate.id }}" role="status" hidden></p>
       </details>
@@ -64,13 +65,20 @@
 <script>
 document.querySelector("#add-source").addEventListener("click", async () => {
   const result = document.querySelector("#add-source-result");
-  const response = await fetch("/api/sources", {
+  const unlock = lockControls(document.querySelectorAll('#add-source,#source-url,#source-type'));
+  result.hidden = false; result.textContent = '正在连接来源…';
+  try {
+  await requestJSON("/api/sources", {
     method: "POST",
     headers: {"Content-Type": "application/json", "X-Requested-With": "learning-practice"},
     body: JSON.stringify({url: document.querySelector("#source-url").value, question_type: document.querySelector("#source-type").value})
   });
   result.hidden = false;
-  await readResponse(response); result.textContent = '来源已连接，可以点击开始对齐更新。';
+  result.textContent = '来源已连接，可以点击开始对齐更新。';
+  const refresh = document.createElement('a'); refresh.href = '/sources'; refresh.textContent = '刷新查看来源列表 →';
+  result.append(document.createElement('br'), refresh);
+  } catch (error) { result.textContent = error.message; }
+  finally { unlock(); }
 });
 for (const button of document.querySelectorAll("[data-candidate-action]")) {
   button.addEventListener("click", async () => {
@@ -80,18 +88,20 @@ for (const button of document.querySelectorAll("[data-candidate-action]")) {
     const choice = document.querySelector(`[data-candidate-match="${candidateId}"]`);
     const body = choice?.value === 'new' ? {as_new: true} : {existing_question_id: choice?.value || null};
     if (action === 'approve' && choice && !choice.value) { output.hidden = false; output.textContent = '请先确认题目身份'; return; }
-    button.disabled = true;
+    let resolved = false;
+    const controls = button.closest('.candidate-item').querySelectorAll('button,select');
+    const unlock = lockControls(controls);
     try {
-    const response = await fetch(`/api/candidates/${candidateId}/${action}`, {
+    await requestJSON(`/api/candidates/${candidateId}/${action}`, {
       method: "POST",
       headers: {"X-Requested-With": "learning-practice", "Content-Type": "application/json"},
       body: JSON.stringify(body)
     });
     output.hidden = false;
-    await readResponse(response); output.textContent = action === 'approve' ? '已加入题库。' : '已忽略，片段没有变化时不再提醒。'; button.closest('.candidate-item').querySelectorAll('button').forEach(item=>item.disabled=true);
+    output.textContent = action === 'approve' ? '已加入题库。' : '已忽略，片段没有变化时不再提醒。'; resolved = true;
     } catch (error) { output.hidden = false; output.textContent = error.message; }
-    finally { button.disabled = false; }
+    finally { unlock(); if (resolved) controls.forEach(item => item.disabled = true); }
   });
 }
-</script><script src="/static/alignment.js"></script>
+</script><script src="{{ asset_url('alignment.js') }}"></script>
 {% endblock %}

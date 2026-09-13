@@ -9,7 +9,7 @@ def source_inventory(connection, source_id):
     questions = {row['id']: dict(row) for row in connection.execute(
         "SELECT q.id,q.current_version_id,q.source_status,v.prompt,v.reference_text,v.category_path,v.material_status "
         "FROM question q JOIN question_version v ON v.id=q.current_version_id "
-        "WHERE EXISTS(SELECT 1 FROM source_binding b WHERE b.question_id=q.id AND b.source_id=?)", (source_id,))}
+        "WHERE EXISTS(SELECT 1 FROM source_binding b WHERE b.question_id=q.id AND b.source_id=? AND b.confirmation_status!='migrated')", (source_id,))}
     snapshot = connection.execute("SELECT ss.blocks_json FROM source_sync_state st JOIN source_snapshot ss "
                                   "ON ss.id=st.snapshot_id WHERE st.source_id=?", (source_id,)).fetchone()
     modules, path = {}, {}

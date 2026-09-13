@@ -14,7 +14,9 @@ class ExportError(RuntimeError):
     """An export or restore verification failed."""
 
 
-FACT_TABLES = ("question", "question_version", "task", "attempt", "evaluation", "review_round", "valid_review_pass")
+FACT_TABLES = ("question", "question_version", "task", "attempt", "evaluation", "review_round", "valid_review_pass",
+               "reflection", "interview_session", "interview_turn", "interview_derivation", "free_practice_batch", "reference_correction",
+               "reference_verification", "reference_correction_history")
 
 
 def export_learning_data(connection, destination: Path, media_directory: Path) -> Path:
@@ -24,6 +26,7 @@ def export_learning_data(connection, destination: Path, media_directory: Path) -
         backup_database(connection, database_path)
         media = _media_manifest(media_directory)
         with closing(sqlite3.connect(database_path)) as backup:
+            _validate_required_media(backup, media)
             manifest = {"schema_version": backup.execute("SELECT MAX(version) FROM schema_version").fetchone()[0],
                         "database_sha256": _file_hash(database_path), "media": media,
                         "counts": {table: backup.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in FACT_TABLES}}
@@ -69,6 +72,7 @@ def verify_export(archive_path: Path, extraction_directory: Path) -> dict[str, i
                     if table not in FACT_TABLES or restored.execute(f"SELECT count(*) FROM {table}").fetchone()[0] != expected:
                         raise ExportError("learning record counts do not match the manifest")
                 count = restored.execute("SELECT count(*) FROM question").fetchone()[0]
+                _validate_required_media(restored, manifest['media'])
             for relative_path, expected in manifest["media"].items():
                 if _file_hash(root / "media" / relative_path) != expected:
                     raise ExportError("media hash mismatch")
@@ -85,6 +89,25 @@ def _validate_manifest(manifest, names):
             raise ExportError("invalid media manifest entry")
         if f"media/{relative_path}" not in names:
             raise ExportError("archive is missing referenced media")
+
+
+def _validate_required_media(connection, media):
+    """Check the frozen database's full closure, including retired versions."""
+    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    groups = []
+    if 'version_resources' in tables:
+        groups.extend(json.loads(row[0]) for row in connection.execute('SELECT materials_json FROM version_resources'))
+    if 'parser_candidate' in tables:
+        groups.extend(json.loads(row[0]).get('materials', []) for row in connection.execute('SELECT draft_json FROM parser_candidate'))
+    for items in groups:
+        for item in items:
+            if item.get('status') != 'complete' or item.get('kind') not in {'media', 'sheet'}:
+                continue
+            path, digest = item.get('path'), item.get('sha256')
+            if not _safe_path(path) or path not in media:
+                raise ExportError('数据库引用的已归档附件缺失，备份未通过完整性检查')
+            if not digest or media[path] != digest:
+                raise ExportError('数据库引用的附件哈希不匹配，备份未通过完整性检查')
 
 
 def _media_manifest(media_directory: Path) -> dict[str, str]:

@@ -114,7 +114,7 @@ def _publish_question(
     now: str,
 ) -> int:
     binding = connection.execute(
-        "SELECT question_id FROM source_binding WHERE source_id=? AND main_anchor_block_id=?",
+        "SELECT question_id,confirmation_status FROM source_binding WHERE source_id=? AND main_anchor_block_id=?",
         (draft.source_id, draft.main_anchor_block_id),
     ).fetchone()
     if binding is None:
@@ -125,12 +125,20 @@ def _publish_question(
     value = asdict(draft)
     if not draft.materials:
         value.pop("materials")
+    if not draft.parse_issues:
+        value.pop('parse_issues')
     content_hash = stable_hash(value)
     current = connection.execute(
         "SELECT v.id,v.content_hash,v.review_basis_id FROM question q "
         "JOIN question_version v ON v.id=q.current_version_id WHERE q.id=?",
         (question_id,),
     ).fetchone()
+    if binding is not None and binding['confirmation_status'] == 'migrated':
+        raise SyncIntegrityError('该题已迁移到其他来源，请在候选中明确确认题目归属')
+    if connection.execute("SELECT 1 FROM source_binding WHERE question_id=? AND active=1 "
+        "AND confirmation_status!='migrated' AND NOT(source_id=? AND main_anchor_block_id=?)",
+        (question_id, draft.source_id, draft.main_anchor_block_id)).fetchone():
+        raise SyncIntegrityError('该题有多个来源归属，请在候选中明确选择当前来源')
     connection.execute(
         "UPDATE source_binding SET prompt_block_ids_json=?,reference_block_ids_json=?,"
         "parser_version=?,confirmation_status=?,active=1,missing_observation_count=0 "

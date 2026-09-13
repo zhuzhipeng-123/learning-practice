@@ -2,9 +2,10 @@ import sqlite3
 from datetime import UTC, date, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.routes.model_errors import model_error_response
 from app.services.llm_config import (
     DEFAULT_MODELS,
     MODULES,
@@ -37,6 +38,35 @@ class GlobalProvider(BaseModel):
     provider: Literal['agnes', 'openrouter']
 
 
+class InterviewReference(BaseModel):
+    turn_id: str | None = Field(default=None, max_length=200)
+
+
+class InterviewGeneration(BaseModel):
+    expected_revision: str | None = Field(default=None, max_length=200)
+
+
+@router.get('/interviews/{session_id}/conversation')
+def read_live_conversation(session_id: str, database: Database, pending_revision: str | None = Query(None, max_length=200)):
+    from app.services.interview_conversation import live_conversation
+    return live_conversation(database, session_id, pending_revision)
+
+
+@router.post('/interviews/{session_id}/reference')
+def read_interview_reference(session_id: str, body: InterviewReference, database: Database):
+    from app.services.interview_answers import view_reference
+    return view_reference(database, session_id, body.turn_id)
+
+
+@router.post('/interviews/{session_id}/reference/generate')
+def complete_interview_reference(session_id: str, body: InterviewReference, database: Database):
+    from app.services.interview_answers import generate_reference
+    try:
+        return generate_reference(database, session_id, body.turn_id)
+    except ModelJobError as error:
+        return model_error_response(error, 409)
+
+
 @router.post('/model-reflections/{reflection_id}/view')
 def read_model_reflection(reflection_id: str, database: Database):
     from app.services.reflections import view_model_reflection
@@ -62,7 +92,8 @@ def read_dialogue(session_id: str, database: Database):
         raise HTTPException(404, "面试会话不存在")
     with transaction(database):
         database.execute("INSERT OR IGNORE INTO question_exposure VALUES (?,?)", (row[0], datetime.now(UTC).isoformat()))
-        turns = database.execute("SELECT role,content FROM interview_turn WHERE session_id=? ORDER BY rowid", (session_id,)).fetchall()
+        turns = database.execute("SELECT it.id,it.role,it.content,EXISTS(SELECT 1 FROM model_job j WHERE j.result_id=it.id AND j.purpose='interview_feedback') AS is_feedback "
+                                 "FROM interview_turn it WHERE it.session_id=? ORDER BY it.rowid", (session_id,)).fetchall()
     return {"turns": [dict(turn) for turn in turns]}
 
 
@@ -76,7 +107,7 @@ def analyze_source(source_id: str, idempotency_key: RequestKey, database: Databa
     try:
         return run_module_job(database, "source_parsing", source_id, idempotency_key)
     except ModelJobError as error:
-        raise HTTPException(429 if error.retry_at else 409, str(error)) from error
+        return model_error_response(error, 409)
 
 
 @router.post("/model-settings/{module}")
@@ -88,11 +119,14 @@ def update_model_settings(module: str, body: ModuleSettings, database: Database)
 
 
 @router.post("/interviews/{session_id}/generate/{kind}")
-def generate_interview(session_id: str, kind: Literal["followup", "feedback"], idempotency_key: RequestKey, database: Database):
+def generate_interview(session_id: str, kind: Literal["followup", "feedback"], idempotency_key: RequestKey, database: Database,
+                       body: InterviewGeneration | None = None):
     try:
-        return run_module_job(database, "interview_" + kind, session_id, idempotency_key)
+        result = run_module_job(database, "interview_" + kind, session_id, idempotency_key,
+                                expected_revision=body.expected_revision if body else None)
+        return {**result, 'turn_count': database.execute('SELECT COUNT(*) FROM interview_turn WHERE session_id=?', (session_id,)).fetchone()[0]}
     except ModelJobError as error:
-        raise HTTPException(429 if error.retry_at else 409, str(error)) from error
+        return model_error_response(error, 409)
 
 
 @router.post("/reflections/generate")
@@ -100,4 +134,4 @@ def generate_reflection(body: ReflectionGeneration, idempotency_key: RequestKey,
     try:
         return run_module_job(database, "daily_reflection", body.activity_date.isoformat(), idempotency_key)
     except ModelJobError as error:
-        raise HTTPException(429 if error.retry_at else 409, str(error)) from error
+        return model_error_response(error, 409)

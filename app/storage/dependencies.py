@@ -12,6 +12,8 @@ def get_database(request: Request) -> Iterator[sqlite3.Connection]:
     database_path: Path = request.app.state.database_path
     connection = connect_database(database_path)
     try:
+        from app.services.current_practice import retire_expired
+        retire_expired(connection)
         yield connection
     finally:
         connection.close()

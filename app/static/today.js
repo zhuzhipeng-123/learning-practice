@@ -24,49 +24,69 @@ function updateSummary() {
 updateSummary();
 const choices = [...quotaInputs, document.querySelector('#code-target'), document.querySelector('#theory-target')];
 const selectionState = () => JSON.stringify(choices.map(input => input.value));
-const originalSelection = selectionState();
-const readyKey = `learning-plan-ready-${generate.dataset.date}`;
-const readyValue = JSON.stringify([generate.dataset.planId, originalSelection]);
-let ready = sessionStorage.getItem(readyKey) === readyValue;
+let originalSelection = selectionState();
+let ready = false;
 function showSavedTasks() {
   const changed = selectionState() !== originalSelection;
   document.querySelector('#unapplied-selection').hidden = ready && !changed;
   document.querySelector('#unapplied-selection').textContent = changed
-    ? '选择已修改。保存后显示对应题单。'
-    : '先选好题量，再点击保存，下面会显示代码和八股题目。';
-  document.querySelector('#daily-task-list').hidden = !ready || changed;
-  document.querySelector('#saved-task-count').hidden = !ready || changed;
+    ? '选择已修改，当前仍显示已保存的题单；保存后更新。'
+    : '选择题量并点击“生成这次练习”，题目才会出现在这里。';
+  document.querySelector('#daily-task-list').hidden = !ready;
+  document.querySelector('#saved-task-count').hidden = !ready;
 }
 choices.forEach(input => input.addEventListener('input', () => {
   showSavedTasks();
   feedback.hidden = true;
 }));
-generate.addEventListener('click', async () => {
-  generate.disabled = true;
+async function applyPlan(data, body) {
+  generate.dataset.planId = data.plan_id;
+  const html = await requestText(`/?batch=${encodeURIComponent(data.batch_key)}`, {cache:'no-store'});
+  const documentCopy = new DOMParser().parseFromString(html, 'text/html');
+  if (documentCopy.querySelector('#create-plan').dataset.batchKey !== data.batch_key) throw Error('题单已在其他页面更新，请刷新后重新出题。');
+  for (const id of ['daily-practice','plan-progress']) {
+    const region = documentCopy.getElementById(id);
+    if (!region) throw Error('题量已保存，请重新读取题单。');
+    document.getElementById(id).replaceWith(region);
+  }
+  const allocation = JSON.parse(documentCopy.querySelector('#saved-allocation').textContent);
+  generate.dataset.batchKey = documentCopy.querySelector('#create-plan').dataset.batchKey;
+  originalSelection = JSON.stringify(choices.map(input => String(input.dataset.path ? allocation[input.dataset.path] || 0 : documentCopy.getElementById(input.id).value)));
+  ready = true; generate.textContent = '重新出一批题'; showSavedTasks();
+  const shortages = Object.entries(data.shortages || {}).map(([kind,n])=>`${kind==='code'?'代码':kind==='unallocated'?'八股总计':kind}缺 ${n} 题`).join('；');
+  feedback.textContent = shortages ? `题量已保存。${shortages}。可调整范围或更新题库后再次保存。` : '题量已保存，下面的题单已更新。';
+}
+async function savePlan(body, path, method) {
+  const unlock = lockControls([generate, ...choices]);
+  const keyName = `learning-plan-${body.plan_date}`;
   feedback.hidden = false;
   feedback.textContent = '正在从本地题库抽取…';
   try {
+    const data = await savedRequest(keyName, path, body, method);
+    try { await applyPlan(data, body); }
+    catch (error) {
+      feedback.textContent = error.message;
+      const retry = document.createElement('button'); retry.textContent = '重新读取已保存的题单';
+      retry.onclick = async () => { try { await applyPlan(data, body); } catch (failure) { feedback.textContent = failure.message; } };
+      feedback.append(retry);
+    }
+  } catch(error) {
+    feedback.textContent = error.message;
+    if (error.pending) {
+      const retry = document.createElement('button'); retry.textContent = '恢复上次保存';
+      retry.onclick = () => savePlan(error.pending.values, error.pending.path, error.pending.method || 'POST');
+      feedback.append(retry);
+    }
+  } finally { unlock(); }
+}
+generate.addEventListener('click', () => {
+  try {
     const code = document.querySelector('#code-target'), theory = document.querySelector('#theory-target');
     if (!code.checkValidity() || !theory.checkValidity()) throw Error('题量必须是 0–100 的整数。');
-    const body = {plan_date:generate.dataset.date,code_target:Number(code.value),theory_target:Number(theory.value),module_quotas:quotas()};
+    const body = {plan_date:generate.dataset.date,code_target:Number(code.value),theory_target:Number(theory.value),module_quotas:quotas(),fresh_batch:true,expected_batch:generate.dataset.batchKey || ''};
     if (Object.values(body.module_quotas).reduce((a,b)=>a+b,0) > body.theory_target) throw Error('模块题数之和超过八股总量。');
-    choices.forEach(input => input.disabled = true);
-    const keyName = `learning-plan-${body.plan_date}`;
-    let pending = JSON.parse(sessionStorage.getItem(keyName) || 'null');
-    if (!pending || JSON.stringify(pending.body) !== JSON.stringify(body)) pending = {key:crypto.randomUUID(),body};
-    sessionStorage.setItem(keyName,JSON.stringify(pending));
     const path = generate.dataset.planId ? `/api/plans/${generate.dataset.planId}` : '/api/plans';
-    const data = await readResponse(await fetch(path,{method:generate.dataset.planId ? 'PUT' : 'POST',headers:{'Content-Type':'application/json','X-Requested-With':'learning-practice','Idempotency-Key':pending.key},body:JSON.stringify(body)}));
-    sessionStorage.removeItem(keyName);
-    const shortages = Object.entries(data.shortages || {}).map(([kind,n])=>`${kind==='code'?'代码':kind==='unallocated'?'八股总计':kind}缺 ${n} 题`).join('；');
-    sessionStorage.setItem('learning-plan-notice',shortages ? `任务已保存。${shortages}。可调整数量或范围，或更新题库后再次保存。` : `已按选择保存：代码 ${body.code_target} 题、八股 ${body.theory_target} 题。下方显示今日题单。`);
-    location.reload();
-  } catch(error) { feedback.textContent = error.message; }
-  finally { generate.disabled = false; choices.forEach(input => input.disabled = false); }
+    savePlan(body, path, generate.dataset.planId ? 'PUT' : 'POST');
+  } catch(error) { feedback.hidden = false; feedback.textContent = error.message; }
 });
-const notice = sessionStorage.getItem('learning-plan-notice');
-if (notice) {
-  feedback.hidden=false;feedback.textContent=notice;sessionStorage.removeItem('learning-plan-notice');
-  ready=true;sessionStorage.setItem(readyKey,readyValue);
-}
 showSavedTasks();

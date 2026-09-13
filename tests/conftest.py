@@ -1,9 +1,12 @@
+import json
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from app.storage.database import connect_database, initialize_database
+from tests.quality_fixtures import quality_result
 
 
 @pytest.fixture(autouse=True)
@@ -17,6 +20,11 @@ def isolated_app_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         ('source-theory', 'demo-theory-document', 'https://example.feishu.cn/wiki/demo-theory', 'theory'),
     ])
     monkeypatch.setattr("app.routes.api.queue_source_refresh", lambda connection, *a, **k: {"used_cache": True, "sources": [], "refreshing": []})
+    # Mock only the external reviewer, while still exercising its job and validation path.
+    def reviewer(messages, **kwargs):
+        context = json.loads(messages[1]['content'])
+        return SimpleNamespace(content=json.dumps(quality_result(context['items'])), model='fixture-reviewer')
+    monkeypatch.setattr('app.services.question_quality.client_for_config', lambda _: SimpleNamespace(complete=reviewer))
 
 
 @pytest.fixture

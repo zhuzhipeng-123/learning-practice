@@ -53,7 +53,9 @@ def generate_variants(connection, plan_id, theme, count, question_type, only_new
         rows = [dict(row) for row in rows if row['reference_text'] and len(row['prompt']) + len(row['reference_text']) <= 24000
                 and (selected_ids is None or row['id'] in selected_ids)]
         chosen = random.sample(rows, min(count, len(rows)))
-        context = {'source_id': 'variant:' + request_key, 'spec': spec, 'question_type': question_type, 'questions': chosen}
+        from app.services.reference_corrections import attach_corrections
+        context = {'source_id': 'variant:' + request_key, 'spec': spec, 'question_type': question_type,
+                   'questions': attach_corrections(connection, chosen)}
     if not context['questions']:
         return {'requested': count, 'added': 0, 'missing': count, 'task_ids': []}
     response = run_module_job(connection, 'practice_generation', context['source_id'], request_key, client, context)

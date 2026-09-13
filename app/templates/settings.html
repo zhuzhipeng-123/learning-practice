@@ -6,4 +6,4 @@
 <details class="advanced"><summary>高级设置</summary><label>服务<select name="provider"><option value="agnes" {{ 'selected' if module.provider == 'agnes' else '' }}>Agnes</option><option value="openrouter" {{ 'selected' if module.provider == 'openrouter' else '' }}>OpenRouter</option></select></label><label>模型 ID<input name="model" required maxlength="200" value="{{ module.model }}"></label>
 <label>最多输出 token<input name="max_tokens" type="number" min="128" max="8192" required value="{{ module.max_tokens }}"></label><p class="muted">建议 {{ module.recommended_tokens }}：{{ module.token_rationale }} 这是上限，不是每次必须输出的长度；部分模型推理也可能占用预算。</p></details>
 <button type="submit">保存</button><p role="status"></p></form></details>{% endfor %}
-<p class="muted">程序另行约束输出格式和证据引用，不必在提示词里维护 JSON。密钥只保存在本机配置中。</p><script src="/static/settings.js"></script>{% endblock %}
+<p class="muted">程序另行约束输出格式和证据引用，不必在提示词里维护 JSON。密钥只保存在本机配置中。</p><script id="provider-defaults" type="application/json">{{ provider_defaults|tojson }}</script><script src="{{ asset_url('settings.js') }}"></script>{% endblock %}

@@ -27,8 +27,10 @@ def start_attempt(
 ) -> str:
     """Freeze task version and active review round when answering starts."""
     task = _load_task_context(connection, task_id)
-    if task["status"] in {"cancelled", "completed"}:
-        raise PracticeError("task is already completed or cancelled; start a new review task")
+    if task["status"] == 'cancelled':
+        raise PracticeError('这道旧待办已作废，请返回当前题单；需要保留的题可在复习库继续练')
+    if task["status"] == 'completed':
+        raise PracticeError('这次练习已经完成，请查看已保存的记录或从复习库重新开始')
     existing = connection.execute(
         "SELECT id FROM attempt WHERE task_id=? AND submitted_at IS NULL",
         (task_id,),
@@ -185,6 +187,11 @@ def adopt_theory_evaluation(
 ) -> str:
     if verdict not in {"aligned", "needs_review", "unable_to_assess"}:
         raise ValueError("unsupported verdict")
+    if not corrected_by_user and verdict != 'unable_to_assess':
+        from app.services.reference_state import verification
+        version = connection.execute('SELECT question_version_id FROM attempt WHERE id=?', (attempt_id,)).fetchone()
+        if version and not verification(connection, version[0])['verified']:
+            raise PracticeError('本版本参考尚未独立核对，不能采用自动评分；请先核对或手动评价')
     evaluation_id = new_id("evaluation")
     with transaction(connection):
         previous = connection.execute(
@@ -222,15 +229,19 @@ def add_theory_to_review(
     question_id: str,
     entered_by: str,
     happened_at: datetime,
+    version_id: str | None = None,
 ) -> str:
     version = connection.execute(
         "SELECT v.review_basis_id FROM question q JOIN question_version v "
-        "ON v.id=q.current_version_id WHERE q.id=? AND q.question_type='theory'",
-        (question_id,),
+        "ON v.question_id=q.id AND v.id=COALESCE(?,q.current_version_id) WHERE q.id=? AND q.question_type='theory'",
+        (version_id, question_id),
     ).fetchone()
     if version is None:
         raise PracticeError("theory question was not found")
     with transaction(connection):
+        active = get_active_round(connection, question_id)
+        if active and active['review_basis_id'] != version['review_basis_id']:
+            raise PracticeError('复习库已有另一个版本，请前往复习库继续该版本；旧任务不会替换当前复习依据')
         return enter_review(
             connection,
             question_id,
@@ -291,7 +302,10 @@ def _load_attempt_for_submit(connection: sqlite3.Connection, task_id: str) -> sq
         (task_id,),
     ).fetchone()
     if row is None:
-        raise PracticeError("no active attempt exists")
+        task = _load_task_context(connection, task_id)
+        if task['status'] == 'cancelled':
+            raise PracticeError('这道旧待办已作废，请返回当前题单；需要保留的题可在复习库继续练')
+        raise PracticeError('这次作答已结束或尚未开始，请刷新后查看当前状态')
     return row
 
 

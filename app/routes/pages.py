@@ -4,13 +4,14 @@ from datetime import date, datetime
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app.services.dashboard import day_details, heatmap, latest_reflections, module_tree
+from app.services.free_requests import ORIGINAL_LIMIT, VARIANT_LIMIT
 from app.services.learning_clock import local_today
-from app.services.llm_config import MODULES, get_module_config, provider_status
+from app.services.llm_config import DEFAULT_MODELS, MODULES, get_module_config, provider_status
 from app.services.review import exposed_recently
 from app.services.source_coverage import coverage
 from app.services.source_refresh import source_status
@@ -29,10 +30,10 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
     def settings_page(request: Request, database: Database):
         modules = [get_module_config(database, module) for module in MODULES]
         return templates.TemplateResponse(request=request, name="settings.html",
-                                          context=page_context(request, modules=modules, credentials=provider_status()))
+                                          context=page_context(request, modules=modules, credentials=provider_status(), provider_defaults=DEFAULT_MODELS))
 
     @router.get("/", response_class=HTMLResponse)
-    def today_page(request: Request, database: Database):
+    def today_page(request: Request, database: Database, batch: str | None = Query(None, max_length=200)):
         today = local_today()
         plans = database.execute(
             "SELECT p.*, COUNT(t.id) AS assigned, "
@@ -44,26 +45,29 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
             "SELECT t.*, v.prompt, q.question_type, (SELECT s.id FROM interview_session s WHERE s.task_id=t.id ORDER BY s.rowid DESC LIMIT 1) session_id FROM task t "
             "JOIN question q ON q.id=t.question_id "
             "JOIN question_version v ON v.id=t.question_version_id "
-            "WHERE (t.plan_id=(SELECT id FROM daily_plan WHERE plan_date=?) "
-            "OR t.status IN ('pending','in_progress')) AND t.status!='cancelled' AND t.target_kind='base' "
+            "WHERE t.plan_id=(SELECT id FROM daily_plan WHERE plan_date=?) "
+            "AND t.status!='cancelled' AND t.target_kind='base' "
             "ORDER BY t.created_at, t.id",
             (today.isoformat(),),
         ).fetchall()
         current_plan = next((dict(plan) for plan in plans if plan['plan_date'] == today.isoformat()), None)
         plan_id = current_plan['id'] if current_plan else None
+        from app.services.current_practice import current_daily_batch
+        current_batch = current_daily_batch(database, plan_id) if plan_id else None
+        batch_visible = bool(current_batch and batch == current_batch['batch_key'])
+        tasks = [task for task in tasks if task['id'] in current_batch['task_ids']] if batch_visible else []
         base_tasks = [task for task in tasks if task['plan_id'] == plan_id and task['target_kind'] == 'base']
-        older_tasks = [task for task in tasks if task['plan_id'] != plan_id]
         base_counts = {kind: sum(task['question_type'] == kind for task in base_tasks) for kind in ('code', 'theory')}
         return templates.TemplateResponse(
             request=request,
             name="today.html",
             context=page_context(request, plans=plans, tasks=tasks, today=today,
-                                 base_tasks=base_tasks, older_tasks=older_tasks,
+                                 base_tasks=base_tasks,
                                  base_counts=base_counts, base_completed=sum(task['status'] == 'completed' for task in base_tasks),
                                  reflection=latest_reflections(database, today),
                                  modules=module_tree(database), heatmap=heatmap(database, today, 'daily'), sources=source_status(database),
                                  allocation=next((json.loads(plan["allocation_json"]) for plan in plans if plan["plan_date"] == today.isoformat()), {}),
-                                 current_plan=current_plan),
+                                 current_plan=current_plan, current_batch=current_batch, batch_visible=batch_visible),
         )
 
     @router.get("/days/{day}", response_class=HTMLResponse)
@@ -72,8 +76,9 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
 
     @router.get("/practice/{task_id}", response_class=HTMLResponse)
     def practice_page(task_id: str, request: Request, database: Database):
+        from app.services.reference_state import verification
         task = database.execute(
-            "SELECT t.*, q.question_type, v.prompt, v.reference_text, v.material_status, v.category_path "
+            "SELECT t.*, q.question_type,q.is_classic, q.current_version_id, v.prompt, v.reference_text, v.material_status, v.category_path "
             "FROM task t JOIN question q ON q.id=t.question_id "
             "JOIN question_version v ON v.id=t.question_version_id WHERE t.id=?",
             (task_id,),
@@ -92,6 +97,14 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
             request=request,
             name="practice.html",
             context=page_context(request, task=task, materials=materials, latest=latest, job=job,
+                has_correction=bool(database.execute('SELECT 1 FROM reference_correction WHERE version_id=?', (task['question_version_id'],)).fetchone()),
+                reference_verification=verification(database, task['question_version_id']),
+                next_task=database.execute("SELECT t.id,(SELECT s.id FROM interview_session s WHERE s.task_id=t.id ORDER BY s.rowid DESC LIMIT 1) session_id "
+                    "FROM task t WHERE t.plan_id=? AND t.origin=? AND t.id!=? AND t.status IN ('pending','in_progress') ORDER BY t.created_at LIMIT 1",
+                    (task['plan_id'], task['origin'], task_id)).fetchone(),
+                interview_derivation=database.execute('SELECT * FROM interview_derivation WHERE question_id=?', (task['question_id'],)).fetchone(),
+                adopted=database.execute('SELECT verdict FROM evaluation WHERE attempt_id=? AND adopted=1', (latest['id'],)).fetchone() if latest else None,
+                counted=bool(database.execute('SELECT 1 FROM valid_review_pass WHERE attempt_id=?', (latest['id'],)).fetchone()) if latest else False,
                 derivation=database.execute('SELECT v.prompt FROM question_derivation d JOIN question_version v ON v.id=d.base_version_id WHERE d.question_id=?', (task['question_id'],)).fetchone()),
         )
 
@@ -103,27 +116,22 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
         return templates.TemplateResponse(
             request=request,
             name="free_practice.html",
-            context=page_context(request, plans=plans, heatmap=heatmap(database, local_today(), 'free_practice'), tasks=database.execute("SELECT t.id,t.status,v.prompt,v.category_path,q.question_type FROM task t JOIN question_version v ON v.id=t.question_version_id JOIN question q ON q.id=t.question_id WHERE t.origin='free_practice' AND t.status IN ('pending','in_progress') ORDER BY t.rowid DESC").fetchall()),
+            context=page_context(request, plans=plans, sources=source_status(database), heatmap=heatmap(database, local_today(), 'free_practice'),
+                                 original_limit=ORIGINAL_LIMIT, variant_limit=VARIANT_LIMIT),
         )
 
     @router.get("/interview", response_class=HTMLResponse)
     def interview_page(request: Request, database: Database):
-        sessions = database.execute(
-            "SELECT s.*, v.prompt, COUNT(t.id) AS turn_count FROM interview_session s "
-            "JOIN question_version v ON v.id=s.question_version_id "
-            "LEFT JOIN interview_turn t ON t.session_id=s.id "
-            "GROUP BY s.id ORDER BY s.created_at DESC"
-        ).fetchall()
         return templates.TemplateResponse(
             request=request,
             name="interview.html",
-            context=page_context(request, sessions=sessions),
+            context=page_context(request),
         )
 
     @router.get("/interview/{session_id}", response_class=HTMLResponse)
     def interview_session_page(session_id: str, request: Request, database: Database):
-        session = database.execute("SELECT s.*,v.prompt FROM interview_session s JOIN question_version v "
-                                   "ON v.id=s.question_version_id WHERE s.id=?", (session_id,)).fetchone()
+        session = database.execute("SELECT s.*,v.prompt,t.question_id,q.question_type FROM interview_session s JOIN question_version v "
+                                   "ON v.id=s.question_version_id JOIN task t ON t.id=s.task_id JOIN question q ON q.id=t.question_id WHERE s.id=?", (session_id,)).fetchone()
         if session is None:
             raise HTTPException(404, "面试会话不存在")
         turns = database.execute("SELECT * FROM interview_turn WHERE session_id=? ORDER BY rowid", (session_id,)).fetchall()
@@ -135,7 +143,9 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
                                                                        "AND purpose='interview_followup'", (dialogue[-1]["id"],)).fetchone():
             latest_question = dialogue[-1]["content"]
         return templates.TemplateResponse(request=request, name="interview_session.html",
-                                          context=page_context(request, session=session, turns=turns, latest_question=latest_question))
+                                          context=page_context(request, session=session, turns=turns, latest_question=latest_question,
+                                                               latest_turn_id=dialogue[-1]['id'] if latest_question else '',
+                                                               code_assessment=database.execute('SELECT code_self_result FROM attempt WHERE task_id=? AND submitted_at IS NOT NULL ORDER BY rowid DESC LIMIT 1', (session['task_id'],)).fetchone()))
 
     @router.get("/sources", response_class=HTMLResponse)
     def sources_page(request: Request, database: Database):
@@ -170,10 +180,11 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
         rounds = [dict(row) for row in rounds]
         now = datetime.now(ZoneInfo('Asia/Shanghai'))
         for item in rounds:
+            item['span_days'] = round((datetime.fromisoformat(item['last_pass_at']) - datetime.fromisoformat(item['first_pass_at'])).total_seconds() / 86400, 2) if item['first_pass_at'] else 0
             if database.execute('SELECT 1 FROM valid_review_pass WHERE review_round_id=? AND activity_date=?', (item['id'], now.date().isoformat())).fetchone():
                 item['hint'] = '今天已记过一次独立答对，可以继续练，但不会重复计数。'
             elif exposed_recently(database, item['question_id'], now):
-                item['hint'] = '最近24小时查看过答案、历史作答或模型复盘；现在可以练，独立答对次数暂不增加。'
+                item['hint'] = '最近24小时查看过参考答案或含答案的历史记录；现在可以练，独立答对次数暂不增加。'
             else:
                 item['hint'] = '先独立作答，通过后记录今天的一次进步。'
         return templates.TemplateResponse(
@@ -182,21 +193,16 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
             context=page_context(request, rounds=rounds),
         )
 
-    @router.get("/history", response_class=HTMLResponse)
-    def history_page(request: Request, database: Database):
-        attempts = database.execute(
-            "SELECT a.*, t.question_id, t.origin, v.prompt FROM attempt a "
-            "JOIN task t ON t.id=a.task_id "
-            "JOIN question_version v ON v.id=a.question_version_id "
-            "WHERE a.submitted_at IS NOT NULL ORDER BY a.submitted_at DESC LIMIT 100"
-        ).fetchall()
-        reflections = database.execute(
-            "SELECT * FROM reflection ORDER BY activity_date DESC, version DESC LIMIT 100"
-        ).fetchall()
-        return templates.TemplateResponse(
-            request=request,
-            name="history.html",
-            context=page_context(request, attempts=attempts, reflections=reflections, today=datetime.now(ZoneInfo("Asia/Shanghai")).date()),
-        )
+    @router.get('/questions/{question_id}/history', response_class=HTMLResponse)
+    def question_history_page(question_id: str, request: Request, database: Database, page: int = Query(1, ge=1)):
+        from app.services.history import question_history
+        history = question_history(database, question_id, page)
+        if history is None:
+            raise HTTPException(404, '题目不存在')
+        return templates.TemplateResponse(request=request, name='question_history.html', context=page_context(request, **history))
+
+    @router.get("/history")
+    def retired_history_page():
+        return RedirectResponse('/review', status_code=307)
 
     return router

@@ -51,8 +51,12 @@ def reconcile_tree(connection, root, tree):
             elsewhere = connection.execute("SELECT 1 FROM source_tree_member WHERE source_id=? AND status='active'", (old['source_id'],)).fetchone()
             if old['source_id'] and old['source_id'] != root['id'] and not elsewhere:
                 connection.execute('UPDATE source SET enabled=0 WHERE id=?', (old['source_id'],))
-                connection.execute('UPDATE question SET source_status=? WHERE id IN (SELECT question_id FROM source_binding WHERE source_id=?)',
-                                   ('source_deleted' if count >= 2 else 'missing_pending', old['source_id']))
+                connection.execute("UPDATE question SET source_status=? WHERE id IN "
+                    "(SELECT question_id FROM source_binding WHERE source_id=? AND confirmation_status!='migrated') "
+                    "AND NOT EXISTS (SELECT 1 FROM source_binding b JOIN source s ON s.id=b.source_id "
+                    "WHERE b.question_id=question.id AND b.source_id!=? AND b.active=1 "
+                    "AND b.confirmation_status!='migrated' AND s.enabled=1)",
+                    ('source_deleted' if count >= 2 else 'missing_pending', old['source_id'], old['source_id']))
     return sources, changes
 
 

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from fastapi.testclient import TestClient
 
@@ -9,7 +9,9 @@ from app.storage.database import connect_database
 from tests.test_sync import blocks, draft
 
 
-def test_api_plan_and_code_submission_flow() -> None:
+def test_api_plan_and_code_submission_flow(monkeypatch) -> None:
+    monkeypatch.setattr('app.routes.api.local_today', lambda: date(2026, 9, 11))
+    monkeypatch.setattr('app.services.current_practice.local_today', lambda: date(2026, 9, 11))
     with TestClient(app) as client:
         database = connect_database(app.state.database_path)
         try:

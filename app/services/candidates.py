@@ -28,6 +28,8 @@ def approve_candidate(connection, candidate_id: str, existing_question_id: str |
     if row is None:
         raise CandidateError("candidate is outdated or already decided; refresh the source page")
     value = json.loads(row["draft_json"])
+    if value['material_status'] == 'incomplete_reference':
+        raise CandidateError('参考内容超出读取上限或含未解析内容，请在来源补全、拆分后重新对齐；不能直接标为完整')
     if value['question_type'] == 'theory':
         from app.services.theory_rules import candidate_heading_allowed
         if not candidate_heading_allowed(connection, row['source_id'], row['main_anchor_block_id']):
@@ -35,6 +37,11 @@ def approve_candidate(connection, candidate_id: str, existing_question_id: str |
     matches = value.get("match_question_ids", [])
     if matches and existing_question_id is None and not as_new:
         raise CandidateError("choose an existing question to preserve history, or explicitly create a new one")
+    retired = connection.execute("SELECT 1 FROM source_binding b WHERE source_id=? AND main_anchor_block_id=? "
+        "AND (confirmation_status='migrated' OR EXISTS(SELECT 1 FROM source_binding other WHERE other.question_id=b.question_id "
+        "AND other.id!=b.id AND other.active=1 AND other.confirmation_status!='migrated'))", (row['source_id'], row['main_anchor_block_id'])).fetchone()
+    if retired and existing_question_id is None:
+        raise CandidateError('这个锚点已有迁移历史，请选择关联原题；独立新题请使用新的来源标题锚点')
     if existing_question_id is not None:
         _bind_existing(connection, row, value, existing_question_id)
     draft = _draft_from_json(row["source_id"], row["draft_json"])
@@ -66,6 +73,8 @@ def _bind_existing(connection, row, value, question_id):
         (new_id("binding"), question_id, row["source_id"], row["main_anchor_block_id"],
          json.dumps(value["prompt_block_ids"]), json.dumps(value["reference_block_ids"]), row["parser_version"]),
     )
+    connection.execute("UPDATE source_binding SET active=1,confirmation_status='confirmed',missing_observation_count=0 "
+                       "WHERE source_id=? AND main_anchor_block_id=?", (row['source_id'], row['main_anchor_block_id']))
 
 
 @atomic

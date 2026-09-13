@@ -21,6 +21,7 @@ class QuestionDraft:
     material_status: str
     confirmation_status: str = "confirmed"
     materials: tuple[dict, ...] = ()
+    parse_issues: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -9,19 +9,17 @@
   <script src="{{ asset_url('model_text.js') }}"></script>
 </head>
 <body data-local-date="{{ page_day }}">
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
   <header>
     <h1>学习练习</h1>
-    <nav>
-      <a href="/">今天</a>
-      <a href="/free-practice">自由练习</a>
-      <a href="/review">复习库</a>
-      <a href="/interview">秋招</a>
-      <a href="/history">历史</a>
-      <a href="/sources">题库与来源</a>
-      <a href="/settings">模型设置</a>
+    <nav aria-label="主要导航">
+      {% for path,label in [('/', '今天'),('/free-practice','自由练习'),('/review','复习库'),('/interview','秋招'),('/sources','题库与来源'),('/settings','模型设置')] %}
+      <a href="{{ path }}" {{ 'aria-current=page' if request.url.path == path else '' }}>{{ label }}</a>
+      {% endfor %}
     </nav>
   </header>
-  <div id="new-day-notice" class="notice" hidden>新的一天开始了，当前输入已保留。保存后 <a href="/">前往今天 →</a></div><main>{% block content %}{% endblock %}</main>
+  <noscript><p class="notice">浏览记录可以继续；保存回答、生成题目等操作需要启用 JavaScript。请启用后重新打开页面。</p></noscript>
+  <div id="new-day-notice" class="notice" hidden>新的一天开始了，当前输入已保留。保存后 <a href="/">前往今天 →</a></div><main id="main-content" tabindex="-1">{% block content %}{% endblock %}</main>
 <script src="{{ asset_url('rollover.js') }}"></script><script src="{{ asset_url('reflection_view.js') }}"></script>
 </body>
 </html>

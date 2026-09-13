@@ -2,12 +2,13 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from app.domain import QuestionDraft
+from app.parsers.block_tree import ordered_blocks
 
 HEADING_TYPES = {3: 1, 4: 2, 5: 3, 6: 4, 7: 5, 8: 6}
 
 
 def is_theory_heading(block):
-    return HEADING_TYPES.get(block.get('block_type')) in {1, 2, 3} and bool(block_text(block))
+    return not block.get('_reference_container') and HEADING_TYPES.get(block.get('block_type')) in {1, 2, 3} and bool(block_text(block))
 
 
 @dataclass(frozen=True)
@@ -26,13 +27,14 @@ def parse_docx_blocks(
     category_prefix: str = "",
 ) -> ParseResult:
     """Produce conservative candidates; only clear code sections auto-publish."""
+    blocks = ordered_blocks(blocks)
     paths: dict[int, str] = {0: category_prefix} if category_prefix else {}
     published: list[QuestionDraft] = []
     candidates: list[QuestionDraft] = []
     covered: set[str] = set()
     unsupported: set[str] = set()
     for index, block in enumerate(blocks):
-        level = HEADING_TYPES.get(block.get("block_type"))
+        level = None if block.get('_reference_container') else HEADING_TYPES.get(block.get("block_type"))
         text = block_text(block)
         if level is not None:
             _update_path(paths, level, text)
@@ -46,13 +48,13 @@ def parse_docx_blocks(
                     covered.update(used)
             if question_type == "theory" and is_theory_heading(block):
                 # A heading immediately containing other questions is a module.
-                if not _following_content(blocks, index):
+                if not _following_content(blocks, index) and not _reference_issues(blocks, index):
                     continue
                 draft, used = _parse_theory_candidate(source_id, document_id, {k:v for k,v in paths.items() if k < level}, blocks, index)
                 (published if draft.confirmation_status == "confirmed" else candidates).append(draft)
                 covered.update(used)
             continue
-        if "sheet" not in block and block.get("block_type") not in {*HEADING_TYPES, 1, 2, 12, 13, 14, 15, 19, 24, 25, 27, 34}:
+        if "sheet" not in block and block.get("block_type") not in {*HEADING_TYPES, 1, 2, 12, 13, 14, 15, 19, 22, 24, 25, 27, 34}:
             unsupported.add(str(block.get("block_id")))
     return ParseResult(published, candidates, covered, unsupported)
 
@@ -139,7 +141,8 @@ def _parse_theory_candidate(
     following = _following_content(blocks, index)
     reference_ids = tuple(str(block["block_id"]) for block in following)
     reference_text = "\n".join(filter(None, (block_text(block) for block in following)))
-    clear = bool(paths and reference_text and len(block_text(question)) <= 300)
+    issues = _reference_issues(blocks, index)
+    clear = bool(paths and reference_text and len(block_text(question)) <= 300 and not issues)
     draft = QuestionDraft(
         source_id=source_id,
         document_id=document_id,
@@ -151,8 +154,9 @@ def _parse_theory_candidate(
         category_path=_category_path(paths),
         prompt=block_text(question),
         reference_text=reference_text or None,
-        material_status="complete" if clear else "candidate_requires_user_confirmation",
+        material_status="incomplete_reference" if issues else "complete" if clear else "candidate_requires_user_confirmation",
         confirmation_status="confirmed" if clear else "pending",
+        parse_issues=tuple(issues),
     )
     return draft, {str(question["block_id"]), *reference_ids}
 
@@ -160,7 +164,7 @@ def _parse_theory_candidate(
 def _until_heading(blocks: list[dict[str, Any]], start: int) -> list[dict[str, Any]]:
     result = [blocks[start]]
     for block in blocks[start + 1 :]:
-        if block.get("block_type") in HEADING_TYPES:
+        if block.get("block_type") in HEADING_TYPES and not block.get('_reference_container'):
             break
         result.append(block)
     return result
@@ -172,11 +176,31 @@ def _following_content(
 ) -> list[dict[str, Any]]:
     result = []
     for block in blocks[start + 1 :]:
-        if is_theory_heading(block) or block.get("block_type") in {19, 34}:
+        if is_theory_heading(block):
             break
         if block_text(block) or block.get("block_type") in {14, 27} or "sheet" in block:
             result.append(block)
+        if len(result) >= 200:
+            break
     return result
+
+
+def _reference_issues(blocks, start):
+    """Retain evidence of skipped or truncated answer content in the candidate."""
+    count = 0
+    issues = []
+    for block in blocks[start + 1:]:
+        if is_theory_heading(block):
+            break
+        kind = block.get('block_type')
+        if block_text(block) or kind in {14, 27} or 'sheet' in block:
+            count += 1
+        elif kind not in {1, 2, 19, 22, 24, 25, 34}:
+            issues.append(str(block.get('block_id')))
+        if count > 200:
+            issues.append('truncated_after_200_blocks')
+            break
+    return issues
 
 
 def _image_alt(block: dict[str, Any]) -> str:

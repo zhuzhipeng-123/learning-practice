@@ -80,7 +80,7 @@ def test_edit_replaces_excluded_untouched_task(database):
     assert database.execute('SELECT status FROM task WHERE id=?', (task['id'],)).fetchone()[0] == 'cancelled'
 
 
-def test_home_groups_saved_base_extra_and_older_tasks(monkeypatch):
+def test_home_does_not_restore_saved_base_extra_or_older_tasks(monkeypatch):
     monkeypatch.setattr('app.services.bootstrap.load_initial_sources', list)
     with TestClient(app) as client:
         db = connect_database(app.state.database_path)
@@ -96,18 +96,23 @@ def test_home_groups_saved_base_extra_and_older_tasks(monkeypatch):
             html = client.get('/').text
             assert html.index('heatmap-panel') < html.index('id="daily-reflection"') < html.index('id="code-target"')
             base = html.split('id="daily-task-list"')[1].split('id="older-practice"')[0]
-            assert base.count('class="task-row"') == 5
-            assert base.count('data-kind="code"') == 2 and base.count('data-kind="theory"') == 3
-            assert 'id="added-practice"' not in html and '以前未完成 · 1 题' in html
+            assert base.count('class="task-row"') == 0
+            assert all(t['id'] not in html for t in plan['tasks'])
+            assert 'id="added-practice"' not in html and 'id="older-practice"' not in html
+            old_task = db.execute('SELECT id FROM task WHERE plan_id=?', (old['plan_id'],)).fetchone()[0]
+            assert f'/practice/{old_task}' not in html
+            assert f'/practice/{old_task}' not in client.get('/history').text
+            assert db.execute('SELECT status FROM task WHERE id=?', (old_task,)).fetchone()[0] == 'cancelled'
             headers = {'X-Requested-With': 'learning-practice', 'Idempotency-Key': 'edit'}
             result = client.put('/api/plans/' + plan['plan_id'], headers=headers,
                                 json={'plan_date': local_today().isoformat(), 'code_target': 1, 'theory_target': 1, 'module_quotas': {}})
             assert result.status_code == 200
             html = client.get('/').text
             base = html.split('id="daily-task-list"')[1].split('id="older-practice"')[0]
-            assert base.count('class="task-row"') == 2
-            assert 'id="added-practice"' not in html and old['tasks'][0]['id'] in html
-            assert '继续以前抽过的八股题 · 2 题' in client.get('/free-practice').text
+            assert base.count('class="task-row"') == 0
+            assert 'id="added-practice"' not in html and old['tasks'][0]['id'] not in html
+            assert old['tasks'][0]['id'] not in client.get('/history').text
+            assert 'earlier-count' not in client.get('/free-practice').text
             assert '从题库选' not in client.get('/interview').text
         finally:
             db.close()
@@ -118,7 +123,7 @@ def test_direction_suggestions_and_opening_use_model_with_frozen_context(databas
     def reply(messages, **kwargs):
         context = json.loads(messages[1]['content'])
         calls.append(context)
-        value = {'directions': ['工具调用', 'RAG评估', '模型部署']} if context['mode'] == 'suggest' else {'question': '如何处理工具调用失败？'}
+        value = {'directions': ['工具调用', 'RAG评估', '模型部署']} if context['mode'] == 'suggest' else {'question': '如何处理工具调用失败？', 'reference_text': '区分可重试错误，保留稳定请求标识并限制次数。'}
         return SimpleNamespace(content=json.dumps(value), model='fake')
     fake = SimpleNamespace(complete=reply)
     suggestions = prepare_direction(database, 'suggest', '', '', ['其他方向'], 'suggest', fake)
@@ -142,7 +147,9 @@ def test_bad_direction_response_does_not_create_empty_session(database, response
 
 @pytest.mark.parametrize('kind', ['code', 'theory'])
 def test_free_api_draws_only_requested_type_and_hides_references(monkeypatch, kind):
+    from app.services.free_batches import run_batch
     monkeypatch.setattr('app.services.bootstrap.load_initial_sources', list)
+    monkeypatch.setattr('app.services.free_batches.schedule_batch', lambda *a: None)
     with TestClient(app) as client:
         db = connect_database(app.state.database_path)
         pool(db, 4, 'code')
@@ -150,19 +157,22 @@ def test_free_api_draws_only_requested_type_and_hides_references(monkeypatch, ki
         db.commit()
         db.close()
         page = client.get('/free-practice').text
-        assert page.count('class="free-result" hidden') == 2
+        assert page.count('class="free-current" hidden') == 2
         headers = {'X-Requested-With': 'learning-practice', 'Idempotency-Key': 'typed-draw'}
         body = {'question_type': kind, 'count': 2, 'mode': 'random'}
-        first = client.post('/api/free-practice', headers=headers, json=body)
+        first = client.post('/api/free-practice/batches', headers=headers, json=body)
         assert first.status_code == 200
-        value = first.json()
+        batch_id = first.json()['id']
+        run_batch(app.state.database_path, batch_id)
+        value = client.get('/api/free-practice/state').json()[kind]['result_batch']['result']
         assert value['added'] == 2 and {t['question_type'] for t in value['tasks']} == {kind}
         assert all('reference_text' not in t for t in value['tasks'])
-        assert client.post('/api/free-practice', headers=headers, json=body).json() == value
+        assert client.post('/api/free-practice/batches', headers=headers, json=body).json()['result'] == value
         home = client.get('/').text
         assert all(t['id'] not in home for t in value['tasks'])
         history = client.get('/free-practice').text
-        assert all(t['id'] in history for t in value['tasks'])
+        assert all(t['id'] not in history for t in value['tasks'])
+        assert client.get('/api/free-practice/batches/' + batch_id).json()['result'] == value
 
 
 def test_topic_model_only_sees_requested_question_type(database):

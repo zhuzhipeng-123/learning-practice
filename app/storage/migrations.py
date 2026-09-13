@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.storage.transactions import transaction
 
-CURRENT_VERSION = 8
+CURRENT_VERSION = 12
 MIGRATION_2 = [
     ("CREATE TABLE answer_exposure (attempt_id TEXT NOT NULL REFERENCES attempt(id),"
      "happened_at TEXT NOT NULL, PRIMARY KEY(attempt_id,happened_at))"),
@@ -55,6 +55,44 @@ MIGRATION_8 = [
      "base_version_id TEXT NOT NULL REFERENCES question_version(id), model_job_id TEXT NOT NULL REFERENCES model_job(id))"),
 ]
 
+MIGRATION_9 = [
+    ("CREATE TABLE interview_derivation(question_id TEXT PRIMARY KEY REFERENCES question(id), "
+     "parent_question_id TEXT NOT NULL REFERENCES question(id), session_id TEXT NOT NULL REFERENCES interview_session(id), "
+     "turn_id TEXT REFERENCES interview_turn(id), reference_verified INTEGER NOT NULL DEFAULT 0, "
+     "UNIQUE(session_id,turn_id))"),
+    "CREATE INDEX task_question_history ON task(question_id,created_at)",
+    "CREATE INDEX attempt_activity_history ON attempt(activity_date,submitted_at)",
+    "CREATE INDEX interview_turn_session ON interview_turn(session_id,created_at)",
+]
+
+
+MIGRATION_10 = [
+    ("CREATE TABLE free_practice_batch(id TEXT PRIMARY KEY,request_key TEXT NOT NULL UNIQUE,"
+     "question_type TEXT NOT NULL CHECK(question_type IN ('code','theory')),payload_json TEXT NOT NULL,"
+     "plan_id TEXT NOT NULL REFERENCES daily_plan(id),status TEXT NOT NULL "
+     "CHECK(status IN ('queued','running','complete','failed','interrupted')),result_json TEXT,error TEXT,"
+     "created_at TEXT NOT NULL,updated_at TEXT NOT NULL)"),
+    "CREATE UNIQUE INDEX free_batch_active_kind ON free_practice_batch(question_type) WHERE status IN ('queued','running')",
+]
+
+
+MIGRATION_11 = [
+    ("CREATE TABLE reference_correction(version_id TEXT PRIMARY KEY REFERENCES question_version(id),"
+     "content TEXT NOT NULL,sources_json TEXT NOT NULL,created_at TEXT NOT NULL)"),
+]
+
+MIGRATION_12 = [
+    ("CREATE TABLE reference_verification(version_id TEXT PRIMARY KEY REFERENCES question_version(id),"
+     "verified INTEGER NOT NULL CHECK(verified IN (0,1)),evidence TEXT NOT NULL,created_at TEXT NOT NULL)"),
+    ("INSERT INTO reference_verification SELECT q.current_version_id,d.reference_verified,"
+     "'Migrated explicit user verification',q.created_at FROM interview_derivation d "
+     "JOIN question q ON q.id=d.question_id WHERE q.current_version_id IS NOT NULL"),
+    ("CREATE TABLE reference_correction_history(id TEXT PRIMARY KEY,version_id TEXT NOT NULL REFERENCES question_version(id),"
+     "content TEXT NOT NULL,sources_json TEXT NOT NULL,created_at TEXT NOT NULL)"),
+    ("INSERT INTO reference_correction_history SELECT 'legacy:'||version_id,version_id,content,sources_json,created_at "
+     "FROM reference_correction"),
+]
+
 
 def migrate(connection, backup=True):
     version = connection.execute("SELECT COALESCE(MAX(version),0) FROM schema_version").fetchone()[0]
@@ -68,8 +106,24 @@ def migrate(connection, backup=True):
         with closing(sqlite3.connect(backup_path)) as destination:
             connection.backup(destination)
     with transaction(connection):
-        for target, statements in ((2, MIGRATION_2), (3, MIGRATION_3), (4, MIGRATION_4), (5, MIGRATION_5), (6, MIGRATION_6), (7, MIGRATION_7), (8, MIGRATION_8)):
+        for target, statements in ((2, MIGRATION_2), (3, MIGRATION_3), (4, MIGRATION_4), (5, MIGRATION_5), (6, MIGRATION_6), (7, MIGRATION_7), (8, MIGRATION_8), (9, MIGRATION_9), (10, MIGRATION_10), (11, MIGRATION_11), (12, MIGRATION_12)):
             if version < target:
                 for statement in statements:
                     connection.execute(statement)
+                if target == 12:
+                    _retract_unverified_model_scores(connection)
                 connection.execute("INSERT INTO schema_version VALUES (?,?)", (target, datetime.now(UTC).isoformat()))
+
+
+def _retract_unverified_model_scores(connection):
+    """Retain audit rows but withdraw legacy automatic scores lacking verification."""
+    rows = connection.execute("SELECT e.id,a.id AS attempt_id,a.review_round_id,a.activity_date FROM evaluation e "
+        "JOIN attempt a ON a.id=e.attempt_id JOIN question_version v ON v.id=a.question_version_id "
+        "JOIN question q ON q.id=v.question_id LEFT JOIN reference_verification r ON r.version_id=v.id "
+        "WHERE q.source_kind='derived' AND COALESCE(r.verified,0)=0 AND e.corrected_by_user=0 "
+        "AND e.adopted=1 AND e.verdict!='unable_to_assess'").fetchall()
+    for row in rows:
+        connection.execute('UPDATE evaluation SET adopted=0 WHERE id=?', (row['id'],))
+        connection.execute("UPDATE reflection SET stale=1 WHERE activity_date=? AND author='model'", (row['activity_date'],))
+        from app.services.review import record_valid_pass
+        record_valid_pass(connection, row['attempt_id'], False)

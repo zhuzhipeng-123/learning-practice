@@ -24,7 +24,8 @@ from tests.test_repair_sync import live_theory, run_live
 HEADERS = {"X-Requested-With": "learning-practice"}
 
 
-def test_completed_answer_and_correction_across_requests():
+def test_completed_answer_and_correction_across_requests(monkeypatch):
+    monkeypatch.setattr('app.services.current_practice.local_today', lambda: date(2026, 9, 11))
     with TestClient(app) as client:
         database = connect_database(app.state.database_path)
         try:
@@ -56,7 +57,7 @@ def test_completed_answer_and_correction_across_requests():
         review = client.post(f"/api/questions/{question}/start-review", headers={**HEADERS, "Idempotency-Key": "web-review"})
         assert review.status_code == 200 and review.json()["task_id"] != task["id"]
         assert 'data-review-question' in client.get('/review').text
-        assert task['id'] in client.get('/history').text
+        assert task['id'] in client.get(f'/questions/{question}/history').text
         database = connect_database(app.state.database_path)
         try:
             assert database.execute("SELECT COUNT(*) FROM answer_exposure").fetchone()[0] == 1
@@ -91,8 +92,9 @@ def test_expired_job_retries_and_live_lease_blocks_duplicate(database):
     fake = SimpleNamespace(complete=lambda *a, **k: SimpleNamespace(content=json.dumps(payload), model="fake"))
     database.execute("UPDATE model_job SET status='running',updated_at=?", (datetime.now(UTC).isoformat(),))
     database.commit()
-    with pytest.raises(ModelJobError, match="running"):
+    with pytest.raises(ModelJobError) as busy:
         run_evaluation_job(database, result["job_id"], fake)
+    assert busy.value.in_progress
     database.execute("UPDATE model_job SET updated_at=?", ((datetime.now(UTC) - timedelta(minutes=6)).isoformat(),))
     database.commit()
     evaluation = run_evaluation_job(database, result["job_id"], fake)

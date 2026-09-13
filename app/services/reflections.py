@@ -2,6 +2,7 @@ import json
 import sqlite3
 from datetime import UTC, date, datetime
 
+from app.services.tasks import _load_idempotent, _save_idempotent
 from app.storage.ids import new_id
 from app.storage.transactions import atomic
 
@@ -11,15 +12,8 @@ def view_model_reflection(connection, reflection_id, viewed_at):
     row = connection.execute("SELECT * FROM reflection WHERE id=? AND author='model'", (reflection_id,)).fetchone()
     if row is None:
         raise ReflectionError('这份模型复盘不存在')
-    covered = json.loads(row['covered_ids_json'])
-    # Model feedback may reveal an approach; count its explicit viewing as exposure.
-    for record_id in covered:
-        questions = connection.execute("SELECT t.question_id FROM attempt a JOIN task t ON t.id=a.task_id "
-            "WHERE a.id=? OR a.id IN (SELECT attempt_id FROM evaluation WHERE id=?) "
-            "UNION SELECT t.question_id FROM interview_turn it JOIN interview_session s ON s.id=it.session_id "
-            "JOIN task t ON t.id=s.task_id WHERE it.id=?", (record_id, record_id, record_id)).fetchall()
-        for question in questions:
-            connection.execute('INSERT OR IGNORE INTO question_exposure VALUES (?,?)', (question[0], viewed_at.astimezone(UTC).isoformat()))
+    # Daily reflections contain learning suggestions, not answer references.
+    # Merely citing an answer ID does not establish exposure to its solution.
     return {'content': row['content'], 'stale': bool(row['stale'])}
 
 
@@ -27,14 +21,26 @@ class ReflectionError(RuntimeError):
     """A reflection update violates author ownership."""
 
 
+@atomic
 def save_user_reflection(
     connection: sqlite3.Connection,
     activity_date: date,
     content: str,
     created_at: datetime,
+    request_key: str | None = None,
+    expected_id: str | None = None,
 ) -> str:
     """Create a new user-owned version without model overwrite access."""
-    return _save_reflection(
+    payload = {"activity_date": activity_date.isoformat(), "content": content, "expected_id": expected_id}
+    if request_key:
+        previous = _load_idempotent(connection, request_key, 'user_reflection', payload)
+        if previous:
+            return previous['reflection_id']
+    current = connection.execute("SELECT id FROM reflection WHERE author='user' AND activity_date=? ORDER BY version DESC LIMIT 1",
+                                 (activity_date.isoformat(),)).fetchone()
+    if expected_id is not None and expected_id != (current[0] if current else ''):
+        raise ReflectionError('复盘已在其他页面更新，请重新读取后再保存；当前草稿仍保留')
+    result = _save_reflection(
         connection,
         activity_date,
         "user",
@@ -42,6 +48,9 @@ def save_user_reflection(
         [],
         created_at,
     )
+    if request_key:
+        _save_idempotent(connection, request_key, 'user_reflection', payload, {'reflection_id': result}, created_at.isoformat())
+    return result
 
 
 def save_model_reflection(
@@ -114,6 +123,14 @@ def _save_reflection(
 ) -> str:
     if not content.strip():
         raise ReflectionError("reflection cannot be empty")
+    if len(content) > 30000:
+        raise ReflectionError('复盘请控制在30000字以内，原文不会被截断')
+    previous = connection.execute(
+        'SELECT id,content FROM reflection WHERE activity_date=? AND author=? ORDER BY version DESC LIMIT 1',
+        (activity_date.isoformat(), author),
+    ).fetchone()
+    if author == 'user' and previous and previous['content'] == content:
+        return previous['id']
     latest = connection.execute(
         "SELECT COALESCE(MAX(version), 0) FROM reflection WHERE activity_date=? AND author=?",
         (activity_date.isoformat(), author),

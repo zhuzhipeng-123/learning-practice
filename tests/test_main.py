@@ -24,4 +24,5 @@ def test_core_pages_render() -> None:
     assert "今天" in responses[0].text
     assert "题库与来源" in responses[1].text
     assert "复习库" in responses[2].text
-    assert "作答历史" in responses[3].text
+    assert responses[3].url.path == '/review'
+    assert 'href="/history"' not in responses[3].text

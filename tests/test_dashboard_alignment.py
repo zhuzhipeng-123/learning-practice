@@ -215,6 +215,7 @@ def test_every_click_refreshes_but_inflight_clicks_deduplicate(database, monkeyp
 
 
 def test_parallel_api_allocation_never_fetches_sources(monkeypatch):
+    monkeypatch.setattr('app.routes.api.local_today', lambda: date(2026, 9, 1))
     def forbidden(*args, **kwargs):
         raise AssertionError('ordinary allocation must not fetch sources')
     monkeypatch.setattr('app.routes.api.queue_source_refresh', forbidden)

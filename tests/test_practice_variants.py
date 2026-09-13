@@ -64,7 +64,7 @@ def test_bad_generation_never_publishes_partial_tasks(database, text):
 
 
 def test_ten_days_daily_and_free_heatmaps_are_separate(database):
-    pool(database, 3, 'code')
+    pool(database, 24, 'code')
     today = local_today()
     for index in range(10):
         day = today - timedelta(days=9-index)

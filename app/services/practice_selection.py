@@ -6,7 +6,7 @@ from app.services.model_json import parse_model_json
 from app.services.module_jobs import run_module_job
 
 
-def select_by_description(connection, description, count, request_key, only_new=False, client=None, question_type=None):
+def select_by_description(connection, description, count, request_key, only_new=True, client=None, question_type=None):
     rows = find_new_originals(connection, '', only_new, question_type)
     if not rows:
         return []
@@ -19,7 +19,7 @@ def select_by_description(connection, description, count, request_key, only_new=
 def validate_selection(context, payload):
     allowed = {q['id'] for q in context['questions']}
     ids = payload.get('question_ids') if isinstance(payload, dict) else None
-    if (not isinstance(ids, list) or len(ids) > context['count'] or any(not isinstance(q, str) or q not in allowed for q in ids)
+    if (not isinstance(ids, list) or len(ids) > len(allowed) or any(not isinstance(q, str) or q not in allowed for q in ids)
             or len(set(ids)) != len(ids)):
         raise ModelJobError('选题结果不符合题库范围，请重试或选择完全随机')
     return ids

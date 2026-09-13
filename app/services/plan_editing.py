@@ -1,8 +1,14 @@
 """Explicit plan edits redistribute only untouched tasks."""
 
 import json
+from datetime import UTC, datetime
 
-from app.services.tasks import _validate_targets, fill_daily_plan
+from app.services.tasks import (
+    _load_idempotent,
+    _save_idempotent,
+    _validate_targets,
+    fill_daily_plan,
+)
 from app.storage.transactions import atomic
 
 
@@ -11,11 +17,24 @@ def _matches(row, path):
 
 
 @atomic
-def update_daily_plan(connection, plan_id, code_target, theory_target, module_quotas):
+def update_daily_plan(connection, plan_id, code_target, theory_target, module_quotas,
+                      request_key=None, expected_state=None, required_date=None):
+    payload = {'plan_id': plan_id, 'code_target': code_target, 'theory_target': theory_target,
+                   'module_quotas': module_quotas, 'expected_state': expected_state}
+    if request_key:
+        previous = _load_idempotent(connection, request_key, 'edit_plan', payload)
+        if previous:
+            return previous
     _validate_targets(code_target, theory_target, module_quotas)
     plan = connection.execute('SELECT * FROM daily_plan WHERE id=?', (plan_id,)).fetchone()
     if not plan:
         raise ValueError('今日计划不存在')
+    if required_date and plan['plan_date'] != required_date.isoformat():
+        raise ValueError('日期已变化，只能调整今天的计划；历史保存可按原请求恢复')
+    current = {'code_target': plan['code_target'], 'theory_target': plan['theory_target'],
+                   'module_quotas': json.loads(plan['allocation_json'])}
+    if expected_state is not None and expected_state != current:
+        raise ValueError('计划已在其他页面更新，请重新读取后再保存；当前输入仍保留')
     rows = connection.execute("SELECT t.*,q.question_type,q.source_status,v.category_path,"
         "(t.status!='pending' OR EXISTS(SELECT 1 FROM attempt a WHERE a.task_id=t.id) "
         "OR EXISTS(SELECT 1 FROM interview_session s WHERE s.task_id=t.id)) protected "
@@ -44,4 +63,7 @@ def update_daily_plan(connection, plan_id, code_target, theory_target, module_qu
     connection.execute('UPDATE daily_plan SET code_target=?,theory_target=?,allocation_json=? WHERE id=?',
                        (code_target, theory_target, json.dumps(module_quotas, ensure_ascii=False), plan_id))
     result = fill_daily_plan(connection, plan_id)
-    return {**result, 'cancelled': len(cancelled)}
+    result = {**result, 'cancelled': len(cancelled)}
+    if request_key:
+        _save_idempotent(connection, request_key, 'edit_plan', payload, result, datetime.now(UTC).isoformat())
+    return result

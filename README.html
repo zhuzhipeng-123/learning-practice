@@ -1,81 +1,20 @@
 <!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Learning Practice · 项目说明</title>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Learning Practice · 把今天练过的，留给明天</title>
 <style>
-body{max-width:900px;margin:40px auto;padding:0 24px;font:16px/1.8 system-ui,sans-serif;color:#252525;background:#fff}h1{font-size:28px}h2{font-size:21px;margin-top:32px}a{color:#245b84}pre{padding:16px;background:#f6f6f6;border:1px solid #ddd;overflow:auto}code{font-family:Consolas,monospace}table{border-collapse:collapse;width:100%}th,td{padding:10px;text-align:left;vertical-align:top;border-bottom:1px solid #ddd}.muted{color:#666}li{margin:6px 0}
-</style>
-</head>
-<body>
-<h1>Learning Practice</h1>
-<p>本地学习、练习与复习工具。飞书保存原始题目和参考资料，SQLite 保存任务、作答、评价和复习记录。</p>
-<p class="muted">更新：2026-09-12 · 已按学生练习流程整理页面；模型服务本轮存在超时，具体成功与失败范围见验收报告。</p>
-<h2>目前可以做什么</h2>
-<p>自由练习可选题库原题或模型变种题；变种保留原题版本与生成记录，不写入飞书原题池。每日练习和自由练习各有学习足迹，只有提交才计数，点击日期可分开查看。</p>
-<p>学习足迹和今日复盘位于首页最上方；代码与八股分区展示，首次进入先保存题量才展示题单，返回已保存的练习可继续；首页题单对应保存后的代码／八股数量；修改未保存时会提示，首页不展示额外练习，自由练习按代码与八股独立抽题，旧题可在折叠记录中继续。八股只从一级至三级标题识别题目，四级以下标题和正文属于参考内容。秋招支持自己填写方向或让模型随机推荐方向，再生成开场问题。</p>
-<ul>
-<li>读取飞书 Docx，按确认过的题目边界刷新内容。图片和嵌入表格按内容摘要归档，历史任务保留原版本。</li>
-<li>生成每日任务，继续跨日未完成任务；自由练习支持自然语言描述范围或完全随机，显示可点击的题目卡片，并报告数量不足。</li>
-<li>代码题自评会做／不会做；理论题先保存回答，再点击评价或重试，也可以手动更正评价。</li>
-<li>查看作答历史，显式加入复习库，从复习库开始练习。查看参考、历史答案或评价会记录答案暴露。</li>
-<li>保留题目版本、人工评价和学习事实，导出数据库与媒体，并在独立临时目录校验备份。</li>
-</ul>
-<p>题目身份不明确时需要确认是已有题目的移动，还是独立新题。素材缺失的题目不能分配为新任务。网络或权限失败不会被当成删题。</p>
-<h2>安装和启动（Windows PowerShell）</h2>
-<p>需要 Python 3.12；已有 uv 时在项目目录运行：</p>
-<pre>uv sync --dev
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000</pre>
-<p>这台电脑已准备好项目虚拟环境，直接启动即可：</p>
-<pre>cd 'C:\projects\learning-practice'
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000</pre>
-<p>浏览器打开 <a href="http://127.0.0.1:8000">本地学习页面</a>。默认数据目录为 <code>data/</code>；用 <code>LEARNING_DATA_DIR</code> 指定其他目录。所有测试使用临时目录，不初始化正式学习库。</p>
-<h2>配置</h2>
-<p>公开仓库已移除个人飞书链接和本机路径。首次安装在“题库与来源”登记自己的来源；已有数据库保持原样。可选初始来源配置 local-config.sources.json 仅保存在本机，不提交到 Git。演示标识为占位值。</p>
-<p>项目启动会读取被 Git 忽略的 <code>.env</code>，已有环境变量优先。参考 <code>.env.example</code>，按所用服务在本机填写 <code>AGNES_API_KEY</code> 或 <code>OPENROUTER_API_KEY</code>；不要把密钥放到代码、提交或报告中。</p>
-<ul>
-<li>飞书使用已安装的 <code>lark-cli</code> 和机器人身份；Windows npm 安装会解析到原生程序。也可设置 <code>LARK_CLI_PATH</code>。</li>
-<li>图片需要 <code>docs:document.media:download</code>，表格需要 <code>sheets:spreadsheet:read</code>，还需有目标文档的读取权限。</li>
-<li>真实模型评价需要配置所选服务的密钥；未配置时回答仍会保存，评价失败可重试。模型调用由页面操作触发；重新对齐飞书会在后台读取目录、原文和素材，并分析候选。平时没有定时同步。</li>
-</ul>
-<h2>各模块模型设置</h2>
-<p>进入应用的“模型设置”，分别编辑答案评价、面试追问、面试总结、每日反思、题目边界分析、按描述选题的服务、模型 ID、提示词与输出上限。每个模块独立保存，修改后刷新仍保留。</p>
-<p>Agnes 使用 AGNES_API_KEY；OpenRouter 使用 OPENROUTER_API_KEY，接口固定为 https://openrouter.ai/api/v1/chat/completions。可以按官方模型列表填写带 :free 后缀的模型 ID；程序不会自动切到其他模型。<a href="https://openrouter.ai/docs/guides/routing/model-variants/free">OpenRouter 免费变体说明</a></p>
-<p>切换到 OpenRouter 时默认填写 <code>nex-agi/nex-n2.5-mini:free</code>，各模块仍可分别修改。项目沿用 Python Chat Completions 接口，无需安装 JavaScript SDK。</p>
-<p>已经发起的模型请求保留原提示词和模型配置，重试仍使用该快照；修改对新请求生效。程序会保留结果结构和证据校验要求。密钥不写进 SQLite，不随备份导出。</p>
-<p>已完成的理论作答可点击“按当前设置重新评价”。程序保留原回答和历史评价；人工采用的结论不会被模型覆盖，同一作答不会重复增加任务或复习通过次数。请求失败后可按本次设置重试，刷新页面仍能找到最新请求。</p>
-<p>遇到服务限流，会保存可重试时间并显示提示。同一数据库内各模块共享该服务的冷却时间；重新发起请求也需等待。服务未给出有效等待时间时默认等待 60 秒，到期后手动重试。模型返回截断标记时不会采用不完整结果。</p>
-<p>独立模型请求可以同时运行，没有全局串行或固定六秒间隔。同一请求重复点击只执行一次；只有服务实际返回 429 才进入冷却。</p>
-<h2>手动对齐飞书与历史保护</h2>
-<p>首页和题库管理都有“重新对齐飞书”。每次点击重新遍历 Wiki 所有后代及分页，新增子文档自动登记；普通 Docx 链接仅同步该文档。入口以外的文档需单独登记。读取使用项目固定的应用身份，需要 wiki:node:retrieve 和文档读取权限。</p>
-<p>对齐在后台运行，可刷新后继续查看进度。同一轮重复点击复用运行任务；本轮结束后再次点击，会重新检查最新内容。结果列出逐篇文档、新增/移动/缺失节点、新增题目、修改内容、缺失待核验、确认移除及模型建议。解析失败、目录权限失败、素材失败和模型失败分别显示，不用失败结果删除数据。</p>
-<p>代码负责完整读取、锚点、版本与历史保护；Agnes 分批分析候选的单题、多解法、复合题、笔记和材料缺失。每批输出校验原文锚点，格式错误最多自动重试一次。建议不会直接覆盖历史或凭空补造题目；模糊边界和身份迁移仍需确认。</p>
-<p>已经分配的任务继续引用原题版本；作答、人工评价和复习事实保留。完整读取发现原位置缺失时先暂停新抽题，独立完整读取两次并排除歧义后确认移除。未完整列出的目录不用于判断删文档。重建的块 ID 或跨文档搬题可能需要确认是否沿用原题。</p>
-<h2>首页模块与学习热力图</h2>
-<p>八股按“Wiki 文件夹 → 文档 → 正文标题”逐层展开，可为各分支填写随机题数。父、子分支不能同时分配。今天的题量可以增减，只重新安排未开始的题，已开始和完成的记录保留；没有可练习题的模块明确显示 0。</p>
-<p>首页展示近半年的 GitHub 风格绿色小方格，每格可点入当天详情。按实际上海日期和主任务去重；同一任务一天多次作答或追问算一次活动。详情列出题目、模块、会/评价通过、不会/需复习、待评价和无法判断，并链接原作答及面试会话。查看页面不增加活动，也不会把提交次数当成掌握程度。</p>
-<h2>使用示例</h2>
-<ol>
-<li>点击“重新对齐飞书”，等待逐篇读取与模型分析完成；查看更改清单和待确认题目。第一次整库对齐可耗时数分钟，平时无需重复。</li>
-<li>进入“今天”，逐层选择八股模块和题量并生成任务；数量不足时保留实际可分配数量，不自动补造题目。</li>
-<li>进入一道题，保存回答或自评。理论题点击“开始评价 / 按原设置重试”；修改模型设置后可重新评价，需要时采用自己的评价。</li>
-<li>从“复习库”开始新练习；同轮同一自然日最多记一次有效通过，累计至少 5 次且首末间隔严格超过 7 天才达标。失败不清零，撤销评价会重算。</li>
-</ol>
-<h2>验证结果与边界</h2>
-<table><tr><th>项目</th><th>本机状态</th></tr>
-<tr><td>自动化测试</td><td>152 项通过；Ruff 检查通过。覆盖独立请求并发、重复执行保护、重新评价、复习计数、限流恢复和 v4→v8 迁移。</td></tr>
-<tr><td>真实飞书读取</td><td>八股 Wiki 入口递归发现并读取 41 篇 Docx，刷题入口为 1 篇。图片及引用表格按题目版本归档。文档已读取不代表每段笔记都已转成可练习题。</td></tr>
-<tr><td>真实模型调用</td><td>此前两家模型 1/2/4/8 并发短请求共 30 次全部成功；本轮 Agnes 有一次面试开场请求连接失败，后续重试成功；变种八股评价也曾超时，重试后成功，原回答保留；新增方向推荐、代码变种、八股变种已真实调用成功，选题、错题复盘和面试总结也有成功记录，整轮对齐复核尚未全部通过。Nex 免费模型在隔离库中四个模块全部通过，按两个模块并行运行；流式示例返回 3，usage 包含推理 token，本次 cost=0。此前其他免费模型曾返回 429，本次没有。</td></tr>
-<tr><td>功能边界</td><td>面试对话、个人/模型反思已有页面；题目版本切换、派生题整理与导出仍有页面待接。没有后台常驻调度和自动 OCR。</td></tr>
-<tr><td>迁移与恢复</td><td>旧版数据库升级前自动备份；未知新版拒绝打开。导出校验不会替换正式数据库。</td></tr></table>
-<p>当前修复不等于原始方案全部验收。完整范围见 <a href="docs/original-learning-app-plan.md">原始方案</a>，剩余事项见 <a href="IMPLEMENTATION_STATUS.md">实施状态</a>。</p>
-<h2>开发验证</h2>
-<pre>.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m scripts.verify_install</pre>
-<p>演示样例与真实同步分开。<code>python -m scripts.seed_p0</code> 默认写入 <code>data-demo/</code>，只接受没有快照的数据库；如要浏览演示，请启动时把 <code>LEARNING_DATA_DIR</code> 指向该目录。不要把演示样例当成完整实时题库。</p>
-<p class="muted">工程规则：<a href="AGENTS.md">AGENTS.md</a> · 安装说明：<a href="PORTABLE_SETUP.html">PORTABLE_SETUP.html</a></p>
-<h2>按学生练习流程使用</h2><ol><li>在首页调整代码和八股数量，八股仅一个可展开入口；指定子模块后，其余数量随机。减少数量不移除已开始和完成的题。</li><li>自由练习可描述自己的范围，也可以完全随机。秋招支持填写练习方向或随机推荐方向，由模型生成开场问题，岗位和考察重点由自己填写。</li><li>首页开头展示学习足迹，并分别保存个人复盘和模型错题复盘。模型读取题目、备注和采用的评价；已有模型复盘需点击查看，以记录可能的答案暴露。</li><li>题库页先展示代码和八股模块及题量。在对齐说明框填写新增、删除、移动了哪些内容，再开始完整读取和模型核对。说明本身不能当成删题证据。</li></ol>
-<h2>输出长度的依据</h2><p>默认上限按用途设置，不是必须输出的长度。面试方向与开场1024、答案评价2048、面试追问1024、面试总结2048、错题复盘4096、对齐复核4096、按描述选题2048。变种题6144（每次最多3道，含参考解法）。高级设置默认折叠；提示词可独立修改。实际接入验证可能受模型服务状态影响，超时后不丢失作答、不自动更换服务。</p>
-<p>首页每60秒及回到页面时检查本地日期。新一天会刷新干净页面；有未保存输入时保留输入并提示前往今天。热力图按真实提交日期更新，查看页面和生成模型文字不增加练习次数。</p>
-</body></html>
+:root{--paper:#f6f8f7;--ink:#23352e;--muted:#62756b;--green:#236448;--line:#d6e2da;--wash:#eaf1ed;--white:#fff}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.85 "Microsoft YaHei UI","Segoe UI",sans-serif}a{color:var(--green);text-underline-offset:4px}a:focus-visible,summary:focus-visible{outline:3px solid var(--green);outline-offset:5px}header,main,footer{max-width:1060px;margin:auto;padding:24px 34px}header{display:flex;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line);font-size:14px}header strong{letter-spacing:.04em}.date{color:var(--muted)}.hero{display:grid;grid-template-columns:1.15fr 1fr;align-items:center;gap:56px;padding:45px 0 52px}.eyebrow{font-size:13px;color:var(--muted);margin:0 0 14px;letter-spacing:.08em}h1{font:600 clamp(30px,4.4vw,46px)/1.45 "DengXian","Microsoft YaHei UI",sans-serif;letter-spacing:-.04em;margin:0 0 18px}h2{font-size:23px;line-height:1.5;margin:0 0 18px}h3{font-size:17px;margin:0 0 6px}p{margin:0 0 16px}.lede{color:var(--muted);max-width:29em}.button{display:inline-flex;align-items:center;min-height:46px;padding:9px 20px;background:var(--green);color:white;text-decoration:none;border-radius:7px}.quiet{font-size:13px;color:var(--muted);margin-top:12px}.page{background:var(--white);border:1px solid var(--line);border-top:5px solid var(--green);padding:26px 28px 14px;border-radius:3px 3px 12px 12px;box-shadow:8px 8px 0 var(--wash)}.page-title{display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:10px}.check{display:flex;align-items:baseline;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}.check:last-child{border:0}.mark{color:var(--green);font:22px/1 Consolas,monospace}.check small{display:block;color:var(--muted);font-size:13px}.section{border-top:1px solid var(--line);padding:32px 0}.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:28px}.step{border-left:3px solid var(--line);padding-left:16px}.step strong{color:var(--green);font:14px Consolas,monospace}.step p{font-size:14px;color:var(--muted);margin:0}details{border-top:1px solid var(--line);padding:17px 0}details:last-child{border-bottom:1px solid var(--line)}summary{font-weight:600;cursor:pointer;min-height:32px}details>div{padding:18px 0 0;max-width:850px}pre{background:var(--wash);padding:18px;border-radius:6px;overflow:auto;font:14px/1.8 Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}code{font-family:Consolas,monospace}ul{padding-left:22px}li{margin-bottom:9px}.evidence{display:grid;grid-template-columns:1fr 1fr;gap:24px}.evidence p{font-size:14px;color:var(--muted)}footer{font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-bottom:38px}@media(max-width:720px){header,main,footer{padding-left:22px;padding-right:22px}.hero{grid-template-columns:1fr;gap:28px;padding-top:30px}.steps,.evidence{grid-template-columns:1fr;gap:19px}header{flex-wrap:wrap}.page{padding:20px}h1{font-size:34px}}@media print{.button{display:none}body{background:white}details>div{display:block}.page{box-shadow:none}}
+</style></head><body>
+<header><strong>LEARNING PRACTICE</strong><span class="date">个人秋招练习册 · 2026.09.13</span></header>
+<main><section class="section" aria-label="当前网页体验"><h2>先选择，再开始；要保留的放进复习库</h2><div class="evidence"><div><h3>打开时没有旧题</h3><p>今日练习、自由练习和秋招入口只展示开始操作。点击后才显示本次题目；刷新或重新进入时不自动恢复上一批题单，也不显示最近的面试。代码和八股独立出题。</p></div><div><h3>复习库承接长期积累</h3><p>移除独立“历史”模块和所有全局入口。复习库分为代码、八股；每道复习题保留自己的作答、版本、相关对话和复习进度。旧的历史模块地址会转到复习库。</p></div></div><p>已经打开的面试会话仍支持连续回答和追问，刷新该会话可以恢复已保存的对话与已完成回复。首次进入秋招页面则从新面试开始。</p><p class="quiet" id="fresh-entry-validation">299项测试通过，Ruff通过。浏览器已验证旧数据存在时的空白入口、点击出题、刷新清空、焦点切回、浏览器返回、面试连续对话，以及复习库记录页的练习按钮。正式8000服务已重启；实际浏览器打开并刷新三个入口均无旧题、无历史导航，旧历史地址转入复习库。学习数据逐表散列比对保持一致。</p></section><section class="section" aria-label="连续面试"><h2>秋招面试，沿着你的回答继续聊</h2><p>会话页直接呈现双方对话。点击“发送并继续面试”，回答先保存，面试官再继续追问；可以澄清没懂的条件、补充思路，或要求换个相关考点。参考答案与复习工具按需展开。</p><div class="evidence"><div><h3>问过什么，哪里还值得问</h3><p>结合本场对话、岗位方向，以及部分有记录的薄弱点和未练题目。能深挖具体错误，也允许相关新场景；没有本地练习记录不等于现实中不会。长对话保留完整本地记录，给模型的较早片段会标明省略。</p></div><div><h3>总结要有你的原话</h3><p>每条新总结判断引用实际用户回答，不能把面试官的解释当成学生能力。自我修正引用前后原话，尚未作答单列；引用验证仍不能保证模型的技术判断完全正确。</p></div></div><p>草稿按标签页保存，跨标签页旧回答不能误接到新轮次；追问失败或响应丢失后恢复原请求，避免重复回答和重复生成。保留独立提示词、历史请求与原有复习规则。</p><p class="quiet">本轮新增14项回归，全量273项通过，Ruff通过；11组浏览器交互覆盖发送、刷新、失败恢复、参考与结束。真实Agnes跑过5轮错误、澄清、换题、自我修正场景，并复测有原话证据的总结。390与1366像素下无页面横向溢出，截图工具超时，未完成截图目视验收。11:40已重启正式8000服务，健康接口和页面正常，正式学习记录数量保持一致。</p></section><section class="section" aria-label="网页可用性复核"><h2>网页可用性复核</h2><p>截图中的练习页错误来自旧后端进程读取新模板。新增运行版本检查，文件变化后明确提示重启并阻止新操作；404、参数错误和服务异常提供中文 HTML 恢复页面。来源登记按实际域名与文档路径校验，重复登记不能悄悄保留另一题型。</p><div class="evidence"><div><h3>真实数据形状也检查</h3><p>只读备份真实库，在副本中升级并读取 603 个页面地址，全部返回正常 HTML，包含截图中的练习页。经用户确认，10:18 已重启正式 8000 服务；启动时完成 v11 备份与 v12 升级，备份及正式库完整性检查通过。截图中的练习页已在真实浏览器打开，题干与操作控件正常，未捕获页面脚本错误。</p></div><div><h3>按键、布局与恢复</h3><p>259 项回归全部通过，Ruff 通过。浏览器完成 31 组交互检查，含全部 11 个模型设置模块；12 类页面在 390 和 1366 像素下无横向溢出。已目视核对桌面首页、手机练习页和错误页截图。模型与飞书在按钮测试中使用本地替身，不能据此宣称外部联调完成。</p></div></div><p class="quiet">增加主要导航标记、键盘跳到正文、禁用脚本提示；验证 Enter 保存、版本编辑、来源校正、错误反馈和丢响应恢复。新代码不会自动更新已运行的旧进程。</p></section><section class="section" aria-label="当前修复进度"><h2>9 月 13 日审查修复</h2><p>审查报告的 11 项已复现问题已修复，246 项隔离回归全部通过。本轮新增 29 项回归，覆盖来源归属与容器正文、版本核验与答案暴露、冻结复习依据、保存恢复、版本编辑、参考校正、跨日复盘和附件完整性。</p><div class="evidence"><div><h3>题目可以修正，历史可以追溯</h3><p>在题目的全部记录页查看并编辑参考。派生题的修改建立新版本，旧作答保留原依据；飞书原题可以附上仅适用于本版本的校正与来源。生成答案未经人工核对，不能自动判分。</p></div><div><h3>本轮实际验证</h3><p>浏览器已验证双标签保存冲突、响应丢失恢复、二次编辑刷新、核验状态、校正展示与窄屏无横向溢出。真实 Agnes 评价复测 12 例：11 例判定符合预期，1 例提示注入返回无效结果，被程序拒绝。生成题仍发现示例解释错误且核对器漏检，因此保留待核验状态与人工修正入口，不把模型自检当成正确保证。</p></div></div><p class="quiet">隔离测试未改动真实学习数据或飞书文档；截图工具本轮超时，不能据 DOM 检查宣称完成截图视觉验收。</p></section><section class="hero"><div><p class="eyebrow">练代码 · 讲八股 · 准备面试</p><h1>把今天练过的，<br>留给明天。</h1><p class="lede">每天选好题量，点击生成一张题单。写下回答，回头复习，让自己的积累有迹可循。</p><a class="button" href="http://127.0.0.1:8000/">打开今天的练习 →</a><p class="quiet">本机服务启动后可用。飞书保管原题，本地保存你的学习记录。</p></div>
+<div class="page" aria-label="日常练习流程示例"><div class="page-title"><strong>一页走完今天</strong><span class="date">使用示例</span></div><div class="check"><span class="mark">□</span><div>选好题量，开始练习<small>代码和八股分开；需要长期保留的题加入复习库。</small></div></div><div class="check"><span class="mark">□</span><div>保存回答，再看评价<small>草稿可恢复，遇到报错有路可退。</small></div></div><div class="check"><span class="mark">□</span><div>留下复盘，带走一个薄弱点<small>自己的反思与模型建议分别保留。</small></div></div></div></section>
+<section class="section"><h2>最短使用路径</h2><div class="steps"><div class="step"><strong>01 / 今天</strong><h3>点击生成本次题单</h3><p>选择代码、八股数量后点击出题。八股可展开模块选范围；打开入口不恢复旧题；再次出题会替换旧待办。</p></div><div class="step"><strong>02 / 学完</strong><h3>保存，再决定下一步</h3><p>代码自评会做或不会做；八股先保存再评价。需要巩固时加入复习，或继续下一题。</p></div><div class="step"><strong>03 / 回看</strong><h3>写复盘，看足迹</h3><p>学习后保存个人复盘，需要时生成模型复盘。需要巩固的题进入复习库，按代码与八股分别练习。</p></div></div></section>
+<section class="section"><h2>想加练时，再展开这些</h2>
+<details><summary>自由练习与秋招面试</summary><div><p>自由练习的代码和八股分别选择题源、抽题方式、描述与题量。两边可同时生成；离开或刷新后回来，进度和题单仍在。修改设置用于下一批，已有题目继续可练。原题只抽没提交过的题，也可选择生成变式；加练不会增加首页基础目标。秋招提供错题深挖、经典题和自选方向入口。经典题为空时会明确提示，并使用可练习的原题。</p><p>不会的主问题可直接加入复习。面试追问先整理成独立题目和参考要点，你可以修改并确认；只有核对参考后，才允许它用于自动评价。代码面试需明确自评，聊天不算独立复习通过。</p></div></details>
+<details><summary>飞书改题后，如何更新题库？</summary><div><p>到“题库与来源”点击重新对齐飞书。平时使用本地题库，不会每次打开页面都访问飞书。Wiki 会遍历可读后代和分页，Docx 则读取该篇文档；失败、权限不足或分页不完整不会证明题目被删除。</p><p>已做过的任务保留原题版本与回答。复杂笔记、身份不明确、参考不完整的内容进入待整理；补全原文或确认边界后再同步。图片与表格按版本归档，但目前没有 OCR／视觉评价。</p></div></details>
+<details><summary>保存、计数和复习分别意味着什么？</summary><div><p>保存表示这次作答留下来了，不代表回答正确。首页目标只算每日基础题；自由练习单独统计；学习活动仍记录每日、加练、复习与面试的已提交作答。同一主任务同一天多次作答或追问只算一次活动。</p><p>同轮复习每天最多一个有效通过，累计至少五次且首末间隔严格超过七天才退出；失败不清空已获得的通过。看每日复盘不会触发答案暴露；查看参考、历史答案或答案型面试总结会影响接下来 24 小时的有效通过。</p><p>新作答会让旧模型复盘提示需要更新，你可以重新生成；不会自动覆盖你的个人复盘。没有作答的日子，不会凭空出现学习足迹。</p></div></details>
+<details><summary>安装和启动</summary><div><p>需要 Python 3.12 和 uv。在项目目录执行：</p><pre>uv sync --dev
+# 仅当本机还没有 .env 时创建
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000</pre><p>这台电脑已有项目虚拟环境，也可直接运行：</p><pre>.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000</pre><p>在被 Git 忽略的 <code>.env</code> 中配置 <code>AGNES_API_KEY</code> 或 <code>OPENROUTER_API_KEY</code>，读取飞书需安装并授权 <code>lark-cli</code>，同时具有文档和相关素材的读取权限。首次使用在题库页登记自己的来源。</p><p>默认数据目录是 <code>data/</code>；可用 <code>LEARNING_DATA_DIR</code> 指向其他位置。不要把示例、测试数据放进正式学习库。详细迁移配置见 <a href="PORTABLE_SETUP.html">安装与迁移说明</a>。</p></div></details>
+<details><summary>模型设置、失败恢复与数据备份</summary><div><p>“模型与提示词”中各模块独立设置，默认 Agnes，OpenRouter 为手动选择的备用服务。不会自动换供应商。新问题配对保存参考答案，点击才显示；旧题可显式补充。局部来源校正按版本独立保存，不改写原题。旧请求保留当时配置，按当前设置重新评价会创建新的请求；人工采用的结果不会被迟到模型覆盖。</p><p>回答先保存，模型超时或格式错误后可以重试。页面等待有时间上限，连接挂起也会给出恢复提示；恢复旧提交时，之后补写的草稿单独保留，可复制另存。明确失败后可修改重试；仍在处理中或网络结果不确定时按页面恢复原请求。评价与代码自评会更新页面状态；草稿属于当前浏览器，不跨设备共享。浏览器禁用存储时仍可保存正式回答，但不能保证刷新后的草稿恢复。</p><p>导出含数据库与媒体，校验在独立目录进行。SQLite 当前为 v12，旧库升级前自动备份。回退前先保存新数据，使用配套旧代码在独立目录核验，不要直接覆盖现在的学习记录。密钥不放进数据库或导出包。</p></div></details></section>
+<section class="section"><h2>此前版本的验收记录</h2><div class="evidence"><div><h3>214 项回归 · 全流程与恢复</h3><p>Ruff 通过；按要求跳过3项供应商相关测试。逐步完成安排、作答、评价、追问、复习、复盘与导出，响应丢失后的草稿和按钮恢复通过。十天隔离学习产生 29 次活动、20 份反思；包含题源更新、分页失败、旧版本复习，导出后在新目录恢复并打开页面。</p></div><div><h3>真实 Agnes 内容检查</h3><p>隔离库实际生成题目、参考答案、评价、追问、总结与复盘。一道代码样例通过21,845组输入。仍发现同模型自检漏掉事实错误，因此不能把“核对通过”当成权威答案。</p></div></div><p><a href="FLOW_ACCEPTANCE.md">查看本次完整流程与模型审查 →</a> · <a href="ACCEPTANCE_REPORT.md">此前 R01–R15 记录</a></p><p class="quiet">浏览器已验证独立操作、生成中导航、丢响应重试和禁存储恢复。七个主要页面在手机与桌面宽度无页面溢出；面试参考区与模型表格另做截图目视核验。仍有两条第三方弃用提示；未执行新依赖安装、锁文件核验或漏洞扫描。</p></section>
+</main><footer>工程规则 <a href="AGENTS.md">AGENTS.md</a> · 当前边界 <a href="IMPLEMENTATION_STATUS.md">实施状态</a> · 历史设计 <a href="docs/original-learning-app-plan.md">原始方案</a><br>只服务你的日常备考。复杂性留在后台，今天先做一道题。</footer></body></html>

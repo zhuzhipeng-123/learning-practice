@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.storage.ids import new_id
@@ -59,7 +59,10 @@ def record_valid_pass(
     if not passed or attempt["review_round_id"] is None:
         _remove_pass(connection, attempt_id)
         return False
-    if attempt["answer_exposed_at"] is not None and attempt["answer_exposed_at"] <= attempt["submitted_at"]:
+    if not _assessment_eligible(connection, attempt):
+        _remove_pass(connection, attempt_id)
+        return False
+    if attempt["answer_exposed_at"] is not None and datetime.fromisoformat(attempt["answer_exposed_at"]) <= datetime.fromisoformat(attempt["submitted_at"]):
         _remove_pass(connection, attempt_id)
         return False
     review_round = connection.execute(
@@ -83,7 +86,7 @@ def record_valid_pass(
 
 def recompute_round(connection: sqlite3.Connection, round_id: str) -> bool:
     passes = connection.execute(
-        "SELECT submitted_at FROM valid_review_pass WHERE review_round_id=? ORDER BY submitted_at",
+        "SELECT submitted_at FROM valid_review_pass WHERE review_round_id=? ORDER BY julianday(submitted_at)",
         (round_id,),
     ).fetchall()
     qualifies = _passes_qualify(passes)
@@ -121,22 +124,34 @@ def _passes_qualify(passes: list[sqlite3.Row]) -> bool:
     return (last - first).total_seconds() > REQUIRED_SPAN_SECONDS
 
 
+def _assessment_eligible(connection, attempt):
+    if attempt['code_self_result'] is not None:
+        return True
+    from app.services.reference_state import verification
+    state = verification(connection, attempt['question_version_id'])
+    if state['verified']:
+        return True
+    return bool(connection.execute("SELECT 1 FROM evaluation WHERE attempt_id=? AND adopted=1 "
+                                    "AND corrected_by_user=1 AND verdict='aligned'", (attempt['id'],)).fetchone())
+
+
 def exposed_recently(
     connection: sqlite3.Connection,
     question_id: str,
     at: datetime,
     exclude_attempt_id: str | None = None,
 ) -> bool:
+    at = at.astimezone(UTC)
     cutoff = at - timedelta(hours=24)
-    if connection.execute("SELECT 1 FROM question_exposure WHERE question_id=? AND happened_at>? AND happened_at<=?",
+    if connection.execute("SELECT 1 FROM question_exposure WHERE question_id=? AND julianday(happened_at)>julianday(?) AND julianday(happened_at)<=julianday(?)",
                           (question_id, cutoff.isoformat(), at.isoformat())).fetchone():
         return True
     row = connection.execute(
         "SELECT 1 FROM attempt a JOIN task t ON t.id=a.task_id "
         "WHERE t.question_id=? AND a.id!=COALESCE(?, '') "
-        "AND ((a.answer_exposed_at>? AND a.answer_exposed_at<=?) OR EXISTS ("
-        "SELECT 1 FROM answer_exposure e WHERE e.attempt_id=a.id AND e.happened_at>? "
-        "AND e.happened_at<=?)) LIMIT 1",
+        "AND ((julianday(a.answer_exposed_at)>julianday(?) AND julianday(a.answer_exposed_at)<=julianday(?)) OR EXISTS ("
+        "SELECT 1 FROM answer_exposure e WHERE e.attempt_id=a.id AND julianday(e.happened_at)>julianday(?) "
+        "AND julianday(e.happened_at)<=julianday(?))) LIMIT 1",
         (question_id, exclude_attempt_id, cutoff.isoformat(), at.isoformat(), cutoff.isoformat(), at.isoformat()),
     ).fetchone()
     return row is not None
@@ -162,7 +177,7 @@ def _upsert_daily_pass(
         "WHERE review_round_id=? AND activity_date=?",
         (round_id, attempt["activity_date"]),
     ).fetchone()
-    if existing is not None and existing["submitted_at"] <= attempt["submitted_at"]:
+    if existing is not None and datetime.fromisoformat(existing["submitted_at"]) <= datetime.fromisoformat(attempt["submitted_at"]):
         return
     if existing is not None:
         connection.execute("DELETE FROM valid_review_pass WHERE id=?", (existing["id"],))
@@ -197,7 +212,7 @@ def _remove_pass(connection: sqlite3.Connection, attempt_id: str) -> None:
         (removed["review_round_id"], removed["activity_date"], attempt_id),
     ).fetchall()
     for candidate in candidates:
-        if not exposed_recently(connection, _attempt_question_id(connection, candidate["id"]),
+        if _assessment_eligible(connection, candidate) and not exposed_recently(connection, _attempt_question_id(connection, candidate["id"]),
                                datetime.fromisoformat(candidate["submitted_at"]), candidate["id"]):
             _upsert_daily_pass(connection, removed["review_round_id"], candidate)
             break

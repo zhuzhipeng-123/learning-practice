@@ -117,6 +117,8 @@ def apply_materials(draft, materials):
                     reference += "\n" + item["text"]
     incomplete = any(item["status"] != "complete" for item in selected)
     status = "media_required" if incomplete else "complete"
+    if draft.material_status == 'incomplete_reference':
+        status = 'incomplete_reference'
     if not selected and draft.material_status == "media_required":
         status = "media_required"
     return replace(draft, prompt=prompt, reference_text=reference or None,

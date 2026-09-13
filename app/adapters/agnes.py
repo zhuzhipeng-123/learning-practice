@@ -76,7 +76,10 @@ class AgnesClient:
     def __init__(self, settings: AgnesSettings) -> None:
         self.settings = settings
 
-    def complete(self, messages: list[dict[str, str]], max_tokens: int = 256) -> AgnesReply:
+    def complete_json(self, messages: list[dict[str, str]], max_tokens: int = 256) -> AgnesReply:
+        return self.complete(messages, max_tokens, json_mode=True)
+
+    def complete(self, messages: list[dict[str, str]], max_tokens: int = 256, *, json_mode: bool = False) -> AgnesReply:
         self._validate_messages(messages)
         payload = {
             "model": self.settings.model,
@@ -84,6 +87,8 @@ class AgnesClient:
             "temperature": 0,
             "max_tokens": max_tokens,
         }
+        if json_mode:
+            payload['response_format'] = {'type': 'json_object'}
         timeout = httpx.Timeout(
             connect=self.settings.connect_timeout,
             read=self.settings.read_timeout,

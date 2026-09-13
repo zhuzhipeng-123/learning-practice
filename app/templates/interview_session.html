@@ -1,22 +1,48 @@
 {% extends "base.html" %}
 {% block title %}面试会话 · 学习练习{% endblock %}
 {% block content %}
-<section data-session-id="{{ session.id }}">
-<h2>{{ session.prompt }}</h2><p>会话状态：{{ '进行中' if session.status == 'active' else '已结束' }}</p>
-<p>已保存 {{ turns|length }} 条对话。</p>
-{% if latest_question %}<article><strong>当前追问</strong><pre>{{ latest_question }}</pre></article>{% endif %}
-<button data-interview-action="dialogue">查看已保存对话（会记录答案暴露）</button>
+<section class="interview-room" data-session-id="{{ session.id }}" data-question-id="{{ session.question_id }}" data-session-status="{{ session.status }}">
+<div class="section-heading"><p class="eyebrow">秋招 · 连续面试</p><span id="interview-state" class="tag">会话状态：{{ '进行中' if session.status == 'active' else '已结束' }}</span></div>
+<p class="muted">从这一问开始，沿着你的回答继续聊。</p>
+<h2 data-main-question>{{ session.prompt }}</h2>
+<p class="muted">已保存 <span id="interview-turn-count">{{ turns|length }}</span> 条对话。可以直接回答、补充想法，也可以说哪里没懂、希望换个相关考点。</p>
+<div class="interview-transcript" aria-label="面试对话">
 <div id="saved-dialogue"></div>
+<p id="interview-dialogue-status" role="status">{{ '正在恢复对话…' if session.status == 'active' else '点击下方按钮，回看这场面试。' }}</p>
+{% if session.status == 'active' %}<button id="refresh-conversation" type="button">刷新对话并核对草稿</button>
+{% else %}<button data-interview-action="dialogue">查看已保存对话（会记录答案暴露）</button>{% endif %}
+</div>
 {% if session.status == 'active' %}
-<label>回答<textarea id="interview-answer" rows="7"></textarea></label>
-<button data-interview-action="save">保存回答</button>
-<button data-interview-action="followup">生成一个追问</button>
-<button data-interview-action="end">结束会话</button>
-{% endif %}
-<button data-interview-action="feedback">生成面试总结</button>
-<p class="muted">回答先保存在本地。点击生成后，只向该模块设置的模型服务发送本题及会话内容。查看总结会记录答案暴露。</p>
-<div id="interview-output" class="prose" role="status"></div>
-<p><a href="/interview">返回面试列表</a> · <a href="/settings">修改面试提示词和模型</a></p>
+<section id="active-interview" class="interview-composer panel">
+<label for="interview-answer">我的回答 / 想继续聊的内容</label>
+<textarea id="interview-answer" rows="5" maxlength="30000" placeholder="写下你的思路；也可以说「这问的条件我没理解」「这个不会，换个相关考点吧」。"></textarea>
+<div class="interview-actions"><button class="primary" data-interview-action="send" disabled>发送并继续面试</button><button data-interview-action="save" disabled>只保存回答</button><button data-interview-action="followup" disabled>继续面试</button><button data-interview-action="end">结束会话</button></div>
+<p class="muted">Ctrl / ⌘ + Enter 发送。回答先保存，再请面试官继续；模型失败可以重试，不用重新回答。</p>
 </section>
-<script src="/static/interview.js"></script>
+{% endif %}
+<div id="interview-output" class="prose" role="status"></div>
+<details class="panel interview-toolbox" {{ 'open' if session.status != 'active' }}><summary>参考答案、复习与面试总结</summary>
+<p class="muted">对话中的问题可以单独查看参考或整理成复习题。参考和总结默认收起，主动查看才记录答案暴露。</p>
+<button data-reference-turn="">查看主问题参考答案</button>
+<section id="interview-reference-panel" class="panel" hidden><h3>参考答案</h3><p id="interview-reference-status" role="status"></p><div id="interview-reference-content" class="prose"></div><button id="hide-interview-reference">收起答案</button></section>
+{% if session.question_type == 'theory' %}<button id="review-main-question">主问题不会，加入复习</button><p id="main-review-output" role="status"></p>{% endif %}
+{% if session.question_type == 'code' %}<section class="panel"><h3>这道代码题，我会做吗？</h3><p class="muted">保存回答后由你自评。不会做会加入复习；这次面试自评不增加独立复习次数。</p><button data-interview-code="can_solve" {{ 'disabled' if code_assessment }}>会做</button><button data-interview-code="cannot_solve" {{ 'disabled' if code_assessment }}>不会做</button><p id="interview-code-output" role="status">{% if code_assessment %}{{ '已记录会做；这次面试不增加独立复习次数。' if code_assessment.code_self_result == 'can_solve' else '已记录不会做，并加入复习库。' }}{% endif %}</p></section>{% endif %}
+
+<button data-interview-action="feedback">生成面试总结</button><div id="interview-feedback-output" class="prose" role="status"></div>
+<p class="muted">一个主问题只算一项任务；追问不增加题量。聊天和模型总结不自动增加有效复习次数。</p>
+</details>
+<section id="derived-editor" class="panel" hidden>
+<h3>确认这道复习题</h3><p class="muted">题干应能独立看懂。参考要点是整理草稿，核对后再用于自动评价。点击确认前不会入库。</p>
+<label>题干<textarea id="derived-prompt" rows="4" maxlength="4000"></textarea></label>
+<label>参考要点<textarea id="derived-reference" rows="6" maxlength="20000"></textarea></label>
+<label>分类<input id="derived-category" maxlength="1000" value="面试复习"></label>
+<label><input type="checkbox" id="derived-verified"> 我已核对参考要点，可以用于自动评价</label>
+<button id="confirm-derived">确认加入复习</button><button id="cancel-derived">暂不加入</button>
+<p id="derived-status" role="status"></p>
+</section>
+
+<p class="muted">发送并继续时，向所选模型发送本场对话、岗位方向，以及部分已记录的薄弱点与未练题目；参考答案不自动显示。</p>
+<p><a href="/interview">开始新的面试</a> · <a href="/questions/{{ session.question_id }}/history">这道题的全部记录</a> · <a href="/settings">修改面试提示词和模型</a></p>
+</section>
+<script src="{{ asset_url('interview.js') }}"></script>
 {% endblock %}

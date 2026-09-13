@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from app.adapters.agnes import AgnesClient, AgnesError, AgnesRateLimitError
 from app.services.evaluations import EvaluationValidationError, adopt_model_evaluation
 from app.services.llm_config import client_for_config, freeze_request
-from app.services.model_json import ModelJSONError, parse_model_json
+from app.services.model_json import ModelJSONError, complete_json, parse_model_json
 from app.storage.ids import new_id
 from app.storage.transactions import transaction
 
@@ -15,9 +15,10 @@ LEASE_DURATION = timedelta(minutes=5)
 class ModelJobError(RuntimeError):
     """A model job is busy, invalid, or failed; its saved answer remains intact."""
 
-    def __init__(self, message, retry_at=None):
+    def __init__(self, message, retry_at=None, *, in_progress=False):
         super().__init__(message)
         self.retry_at = retry_at
+        self.in_progress = in_progress
 
 
 def create_reevaluation_job(connection, attempt_id, request_key):
@@ -55,10 +56,10 @@ def run_evaluation_job(connection, job_id: str, client: AgnesClient | None = Non
         request = context["request"]
         config = json.loads(request["config_json"])
         model = client or client_for_config(config)
-        reply = model.complete([
+        reply = complete_json(model, [
             {"role": "system", "content": config["system_prompt"]},
             {"role": "user", "content": request["input_json"]},
-        ], max_tokens=config["max_tokens"])
+        ], config["max_tokens"])
         with transaction(connection):
             connection.execute("UPDATE model_request SET response_text=?,response_model=? WHERE job_id=? AND EXISTS "
                                "(SELECT 1 FROM model_job WHERE id=? AND status='running' AND updated_at=?)",
@@ -90,8 +91,8 @@ def run_evaluation_job(connection, job_id: str, client: AgnesClient | None = Non
 
 
 def fail_job(connection, job_id, claimed_at, error):
-    safe = str(error) if isinstance(error, (AgnesError, EvaluationValidationError, ModelJobError, ModelJSONError)) else type(error).__name__
-    retry_at = error.retry_at if isinstance(error, AgnesRateLimitError) else None
+    safe = str(error) if isinstance(error, (AgnesError, EvaluationValidationError, ModelJobError, ModelJSONError)) else '模型请求未完成，请按原设置重试；若反复失败，请检查模型服务或稍后再试。'
+    retry_at = error.retry_at if isinstance(error, (AgnesRateLimitError, ModelJobError)) else None
     if retry_at:
         safe += f"；请在 {retry_at.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')} 后重试"
     with transaction(connection):
@@ -105,7 +106,7 @@ def fail_job(connection, job_id, claimed_at, error):
             provider = json.loads(request[0])["provider"]
             connection.execute("INSERT INTO provider_cooldown VALUES (?,?) ON CONFLICT(provider) "
                                "DO UPDATE SET retry_at=MAX(retry_at,excluded.retry_at)", (provider, retry_at.isoformat()))
-    return ModelJobError(safe, retry_at)
+    return ModelJobError(safe, retry_at, in_progress=getattr(error, 'in_progress', False))
 
 
 def _claim_job(connection: sqlite3.Connection, job_id: str, context_loader=None) -> dict:
@@ -118,10 +119,14 @@ def _claim_job(connection: sqlite3.Connection, job_id: str, context_loader=None)
         if job["status"] == "complete":
             return {"result_id": job["result_id"]}
         if job["status"] == "running" and job["updated_at"] > cutoff:
-            raise ModelJobError("this request is already running; retry later")
+            raise ModelJobError("请求仍在处理中，请稍后恢复同一请求。", in_progress=True)
         context = (context_loader or _load_job_context)(connection, job_id)
         if context_loader is None:
             context["request"] = freeze_request(connection, job_id, "theory_evaluation", json.loads(_evaluation_prompt(context)))
+            frozen = json.loads(context['request']['input_json'])
+            # Retries use precisely the reference/correction that the model received.
+            context['reference_text'] = frozen['reference'] if context['reference_verification']['verified'] else None
+            context['reference_ids'] = frozen['reference_ids']
             adopted = connection.execute("SELECT id,corrected_by_user FROM evaluation WHERE attempt_id=? AND adopted=1",
                                          (context["attempt_id"],)).fetchone()
             context["adopted_id"] = ("manual:" + adopted["id"] if adopted["corrected_by_user"] else adopted["id"]) if adopted else None
@@ -141,7 +146,8 @@ def _claim_job(connection: sqlite3.Connection, job_id: str, context_loader=None)
 def _load_job_context(connection: sqlite3.Connection, job_id: str) -> dict:
     row = connection.execute(
         "SELECT a.id AS attempt_id,a.answer_text,v.prompt,v.reference_text,v.id AS version_id,"
-        "v.material_status FROM model_job j JOIN evaluation_job_target target ON target.job_id=j.id "
+        "v.material_status "
+        "FROM model_job j JOIN evaluation_job_target target ON target.job_id=j.id "
         "JOIN attempt a ON a.id=target.attempt_id JOIN question_version v ON v.id=a.question_version_id "
         "WHERE j.id=?",
         (job_id,),
@@ -149,14 +155,25 @@ def _load_job_context(connection: sqlite3.Connection, job_id: str) -> dict:
     if row is None:
         raise ModelJobError("saved answer for this job was not found")
     refs = connection.execute(
-        "SELECT reference_ids_json FROM version_resources WHERE version_id=?", (row["version_id"],),
+        "SELECT reference_ids_json,materials_json FROM version_resources WHERE version_id=?", (row["version_id"],),
     ).fetchone()
+    image_reference = bool(refs and any(item.get('role') == 'reference' and item.get('kind') == 'media'
+                                       for item in json.loads(refs['materials_json'])))
+    from app.services.reference_corrections import get_correction
+    from app.services.reference_state import verification
+    state = verification(connection, row['version_id'])
+    correction = get_correction(connection, row['version_id'])
+    reference_ids = json.loads(refs[0] if refs else "[]")
+    if correction:
+        reference_ids.append(correction['id'])
     return {"attempt_id": row["attempt_id"], "prompt": row["prompt"],
-            "reference_text": row["reference_text"], "answer_text": row["answer_text"],
-            "reference_ids": json.loads(refs[0] if refs else "[]")}
+            "reference_text": row["reference_text"] if state['verified'] and not image_reference and row['material_status'] in {'complete','verified','text_complete'} else None,
+            "answer_text": row["answer_text"],
+            "reference_verification": state, "reference_correction": correction, "reference_ids": reference_ids}
 
 
 def _evaluation_prompt(context: dict) -> str:
     return json.dumps({"question": context["prompt"], "reference": context["reference_text"],
+                       "reference_verification": context['reference_verification'], "reference_correction": context['reference_correction'],
                        "reference_ids": context["reference_ids"], "user_answer": context["answer_text"]},
                       ensure_ascii=False)

@@ -54,7 +54,7 @@ def module_tree(connection, question_type='theory'):
 def latest_reflections(connection, day):
     result = {}
     for author in ('user', 'model'):
-        row = connection.execute('SELECT * FROM reflection WHERE activity_date=? AND author=? ORDER BY version DESC LIMIT 1', (day.isoformat(), author)).fetchone()
+        row = connection.execute('SELECT * FROM reflection WHERE activity_date=? AND author=? ORDER BY stale,version DESC LIMIT 1', (day.isoformat(), author)).fetchone()
         result[author] = dict(row) if row else None
     return result
 
@@ -97,8 +97,7 @@ def day_details(connection, day: date, scope='all'):
         "GROUP BY s.id", (value,))]
     if scope not in {'all', 'interview'}:
         interviews = []
-    reflections = [dict(row) for row in connection.execute("SELECT id,author,content,stale FROM reflection r WHERE activity_date=? "
-                   "AND version=(SELECT MAX(version) FROM reflection WHERE activity_date=r.activity_date AND author=r.author)", (value,))]
+    reflections = [row for row in latest_reflections(connection, day).values() if row]
     groups = {'can': [], 'cannot': [], 'pending': [], 'unknown': []}
     latest = {attempt['task_id']: attempt for attempt in attempts}
     for attempt in latest.values():

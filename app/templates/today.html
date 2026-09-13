@@ -16,22 +16,22 @@
   </div>
   <div class="module-picker">{{ tree(modules, true) }}</div>
   <p class="muted" id="quota-summary"></p>
-  <button class="primary" id="create-plan" data-date="{{ today }}" data-plan-id="{{ current_plan.id if current_plan else '' }}">{{ '保存题量并安排练习' if current_plan else '安排今天的练习' }}</button>
-  <p class="muted">可以调整数量和范围；已开始或完成的题保留。展开八股可指定子模块，不指定的数量随机分配。</p>
+  <button class="primary" id="create-plan" data-date="{{ today }}" data-plan-id="{{ current_plan.id if current_plan else '' }}" data-batch-key="{{ current_batch.batch_key if current_batch else '' }}">生成这次练习</button>
+  <p class="muted">打开或刷新本页不会恢复旧题；每次点击都重新抽一批，替换之前未完成的题。只想修改设置可以先填好，不点按钮就不换题。需要保留的题请加入复习库。</p>
   <div id="plan-result" class="notice" role="status" hidden></div>
 </section>
 <aside>
-  <section class="panel"><h3>今日计划进度</h3>{% if current_plan %}<div class="progress-number">{{ base_completed }}<span> / {{ base_tasks | length }} 已完成</span></div><progress value="{{ base_completed }}" max="{{ base_tasks | length or 1 }}"></progress><p class="muted">已保存目标：代码 {{ current_plan.code_target }} · 八股 {{ current_plan.theory_target }}</p><p class="muted">实际安排：代码 {{ base_counts.code }} · 八股 {{ base_counts.theory }}</p>{% else %}<p class="empty-state">选好题量并保存后，开始今天的练习。</p>{% endif %}</section>
+  <section class="panel" id="plan-progress"><h3>本次练习进度</h3>{% if batch_visible %}<div class="progress-number">{{ base_completed }}<span> / {{ base_tasks | length }} 已完成</span></div><progress value="{{ base_completed }}" max="{{ base_tasks | length or 1 }}"></progress><p class="muted">已保存目标：代码 {{ current_plan.code_target }} · 八股 {{ current_plan.theory_target }}</p><p class="muted">实际安排：代码 {{ base_counts.code }} · 八股 {{ base_counts.theory }}</p>{% else %}<p class="empty-state">本次还没有出题。选择题量，点击后开始。</p>{% endif %}</section>
   <section class="panel"><div class="section-heading"><h3>题库状态</h3><a href="/sources">管理 →</a></div><a class="button-link" href="/sources">查看模块 / 对齐更新 →</a><div id="source-summary">{% for source in sources %}<p><span class="status-dot {{ 'warning' if source.last_error or not source.last_check_at else '' }}"></span>{{ '八股' if source.question_type == 'theory' else '代码' }} · {{ '部分内容待确认' if source.last_error else '已同步' if source.last_check_at else '尚未同步' }}</p>{% endfor %}</div><p class="muted">飞书是原始题库，本地保留作答与复习记录。更新题库不会清空学习进度。</p></section>
 </aside>
 </div>
 
 <section class="panel" id="daily-practice">
-<div class="section-heading"><h3>今天的练习</h3><span id="saved-task-count" class="muted" hidden>代码 {{ base_counts.code }} · 八股 {{ base_counts.theory }} · 共 {{ base_tasks | length }} 题</span></div>
+<div class="section-heading"><h3>这次生成的练习</h3><span id="saved-task-count" class="muted" hidden>代码 {{ base_counts.code }} · 八股 {{ base_counts.theory }} · 共 {{ base_tasks | length }} 题</span></div>
 <p id="unapplied-selection" class="notice" role="status">先选好题量并保存，再显示具体题目。</p>
-<div id="daily-task-list" hidden>{% for kind, label in [('code','代码练习'),('theory','八股练习')] %}<section id="daily-{{ kind }}"><h3>{{ label }} · {{ base_counts[kind] }} 题</h3>{{ rows(base_tasks | selectattr('question_type', 'equalto', kind) | list) }}{% if not base_counts[kind] %}<p class="muted">本次没有安排{{ '代码' if kind == 'code' else '八股' }}题。</p>{% endif %}</section>{% endfor %}{% if not base_tasks %}<p class="empty-state">{{ '当前没有安排题目；可调整题量或范围后保存。' if current_plan else '先选择题量，再点击安排练习。' }}</p>{% endif %}</div>
+<div id="daily-task-list" hidden>{% for kind, label in [('code','代码练习'),('theory','八股练习')] %}<section id="daily-{{ kind }}"><h3>{{ label }} · {{ base_counts[kind] }} 题</h3>{{ rows(base_tasks | selectattr('question_type', 'equalto', kind) | rejectattr('status', 'equalto', 'completed') | list) }}{% if not base_counts[kind] %}<p class="muted">本次没有安排{{ '代码' if kind == 'code' else '八股' }}题。</p>{% endif %}{% if base_counts[kind] and not (base_tasks | selectattr('question_type','equalto',kind) | rejectattr('status','equalto','completed') | list) %}<p class="muted">这批练习已全部完成，可以再出一批；需巩固的题请加入复习库。</p>{% endif %}</section>{% endfor %}{% if not base_tasks %}<p class="empty-state">{{ '当前没有安排题目；可调整题量或范围后保存。' if current_plan else '先选择题量，再点击安排练习。' }}</p>{% endif %}</div>
 </section>
-{% if older_tasks %}<details class="panel" id="older-practice"><summary>以前未完成 · {{ older_tasks | length }} 题</summary><p class="muted">可以随时继续，不占用今天的题量。</p>{{ rows(older_tasks) }}</details>{% endif %}
+<p class="muted">旧待办不会保留；长期复习请去<a href="/review">复习库</a>。</p>
 
 <script id="saved-allocation" type="application/json">{{ allocation | tojson }}</script>
 <script src="{{ asset_url('today.js') }}"></script>

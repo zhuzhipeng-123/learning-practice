@@ -2,16 +2,18 @@
 
 import json
 
+from app.parsers.block_tree import ordered_blocks
 from app.parsers.docx import is_theory_heading
 
 
 def exclude_ineligible_anchors(connection, source, blocks):
     if source['question_type'] != 'theory':
         return 0
-    by_id = {block['block_id']: block for block in blocks}
+    by_id = {block['block_id']: block for block in ordered_blocks(blocks)}
     excluded = 0
-    bindings = connection.execute("SELECT question_id,main_anchor_block_id FROM source_binding "
-                                  "WHERE source_id=? AND confirmation_status!='migrated'", (source['id'],)).fetchall()
+    bindings = connection.execute("SELECT b.question_id,b.main_anchor_block_id FROM source_binding b "
+        "WHERE b.source_id=? AND b.confirmation_status!='migrated' AND NOT EXISTS(SELECT 1 FROM source_binding other "
+        "WHERE other.question_id=b.question_id AND other.id!=b.id AND other.active=1 AND other.confirmation_status!='migrated')", (source['id'],)).fetchall()
     for binding in bindings:
         block = by_id.get(binding['main_anchor_block_id'])
         if block is not None and not is_theory_heading(block):
@@ -28,4 +30,4 @@ def exclude_ineligible_anchors(connection, source, blocks):
 def candidate_heading_allowed(connection, source_id, anchor):
     row = connection.execute("SELECT ss.blocks_json FROM source_sync_state st JOIN source_snapshot ss ON ss.id=st.snapshot_id "
                               "WHERE st.source_id=?", (source_id,)).fetchone()
-    return bool(row and any(block['block_id'] == anchor and is_theory_heading(block) for block in json.loads(row[0])))
+    return bool(row and any(block['block_id'] == anchor and is_theory_heading(block) for block in ordered_blocks(json.loads(row[0]))))

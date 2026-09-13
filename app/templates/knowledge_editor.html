@@ -1,0 +1,22 @@
+<section class="panel" id="knowledge-editor" data-question-id="{{ question.id }}" data-current-version="{{ question.current_version_id }}">
+  <h3>{{ '修改题目与答案' if question.source_kind == 'derived' else '核对与校正参考资料' }}</h3>
+  <p class="muted">{{ '保存会留下新版本；已安排的任务和旧作答保留原依据。' if question.source_kind == 'derived' else '原题继续由飞书维护。本地校正附上核对来源，仅适用于选中的版本，新评价会使用它。' }}</p>
+  <label>查看版本<select id="knowledge-version">{% for version in versions %}<option value="{{ version.id }}" {{ 'selected' if version.id == question.current_version_id else '' }}>{{ '当前' if version.id == question.current_version_id else '历史' }} · {{ version.created_at }} · {{ version.prompt[:60] }}</option>{% endfor %}</select></label>
+  <button id="load-knowledge">查看参考并编辑（记录答案暴露）</button>
+  <div id="knowledge-fields" hidden>
+    <label>题干<textarea id="knowledge-prompt" rows="4" maxlength="4000"></textarea></label>
+    <label>参考答案<textarea id="knowledge-reference" rows="8" maxlength="20000"></textarea></label>
+    <label>分类<input id="knowledge-category" maxlength="1000"></label>
+    <div id="knowledge-derived" hidden>
+      <label><input type="checkbox" id="knowledge-verified">我已核对本次填写的题干与答案，可以用于自动评价</label>
+      <button id="save-knowledge">保存修改为新版本</button>
+    </div>
+    <details id="knowledge-correction"><summary>本版本的参考校正</summary>
+      <label>校正内容<textarea id="correction-content" rows="5" maxlength="8000"></textarea></label>
+      <label>核对来源（HTTPS 链接，每行一条）<textarea id="correction-sources" rows="3"></textarea></label>
+      <button id="save-correction">保存参考校正</button>
+    </details>
+  </div>
+  <p id="knowledge-status" role="status"></p>
+</section>
+<script src="{{ asset_url('knowledge_editor.js') }}"></script>

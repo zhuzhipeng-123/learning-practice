@@ -61,7 +61,9 @@ def reparse_theory_snapshots(connection):
         _store_candidates(connection, source['id'], published['snapshot_id'], candidates)
         for anchor in invalid:
             connection.execute("UPDATE question SET source_status='missing_pending' WHERE id IN "
-                               "(SELECT question_id FROM source_binding WHERE source_id=? AND main_anchor_block_id=?)", (source['id'], anchor))
+                "(SELECT b.question_id FROM source_binding b WHERE b.source_id=? AND b.main_anchor_block_id=? "
+                "AND b.confirmation_status!='migrated' AND NOT EXISTS(SELECT 1 FROM source_binding other WHERE other.question_id=b.question_id "
+                "AND other.id!=b.id AND other.active=1 AND other.confirmation_status!='migrated'))", (source['id'], anchor))
         excluded = exclude_ineligible_anchors(connection, source, blocks)
         # publish_snapshot also updates freshness; local reparsing must restore those fields.
         fields = ('last_check_at', 'last_check_success_at', 'last_content_sync_at', 'last_complete_sync_at', 'last_error')

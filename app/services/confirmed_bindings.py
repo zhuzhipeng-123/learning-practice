@@ -5,10 +5,12 @@ from dataclasses import replace
 from difflib import SequenceMatcher
 
 from app.domain import QuestionDraft
+from app.parsers.block_tree import ordered_blocks
 from app.parsers.docx import HEADING_TYPES, block_text, is_theory_heading
 
 
 def rebuild_bindings(connection, source, blocks, parsed):
+    blocks = ordered_blocks(blocks)
     by_id = {block["block_id"]: block for block in blocks}
     discovered = {draft.main_anchor_block_id: draft for draft in [*parsed.published, *parsed.candidates]}
     known = connection.execute(
@@ -24,6 +26,9 @@ def rebuild_bindings(connection, source, blocks, parsed):
         if source['question_type'] == 'theory' and not is_theory_heading(by_id[anchor]):
             continue
         current = discovered.get(anchor)
+        if current and current.material_status == 'incomplete_reference':
+            invalid.add(anchor)
+            continue
         # Recompute clear source boundaries so appended/deleted reference blocks are reflected.
         # Ambiguous/manual spans still follow their explicitly confirmed anchors below.
         if current and current.confirmation_status == "confirmed":
@@ -38,7 +43,7 @@ def rebuild_bindings(connection, source, blocks, parsed):
         if len(reference_ids) > 1:
             indexes = [index for index, block in enumerate(blocks) if block["block_id"] in reference_ids]
             span = blocks[min(indexes):max(indexes) + 1]
-            if any(block.get("block_type") in HEADING_TYPES for block in span):
+            if any(block.get("block_type") in HEADING_TYPES and not block.get('_reference_container') for block in span):
                 invalid.add(anchor)
                 continue
             reference_ids = [block["block_id"] for block in span]
@@ -56,7 +61,7 @@ def rebuild_bindings(connection, source, blocks, parsed):
 def _category(blocks, anchor):
     path = {}
     for block in blocks:
-        level = HEADING_TYPES.get(block.get("block_type"))
+        level = None if block.get('_reference_container') else HEADING_TYPES.get(block.get("block_type"))
         if level:
             path = {key: value for key, value in path.items() if key < level}
             path[level] = block_text(block)
@@ -67,7 +72,10 @@ def _category(blocks, anchor):
 
 def identity_matches(connection, draft):
     """Similarity only raises an ambiguity; it never merges identities automatically."""
-    matches = []
+    matches = [row['question_id'] for row in connection.execute(
+        "SELECT b.question_id FROM source_binding b WHERE b.source_id=? AND b.main_anchor_block_id=? "
+        "AND (b.confirmation_status='migrated' OR EXISTS(SELECT 1 FROM source_binding other WHERE other.question_id=b.question_id "
+        "AND other.id!=b.id AND other.active=1 AND other.confirmation_status!='migrated'))", (draft.source_id, draft.main_anchor_block_id))]
     rows = connection.execute(
         "SELECT q.id,v.prompt,v.reference_text FROM question q JOIN question_version v "
         "ON v.id=q.current_version_id WHERE q.source_kind='feishu' AND q.question_type=? "
@@ -86,13 +94,19 @@ def identity_matches(connection, draft):
 
 def select_drafts(connection, source, blocks, parsed):
     confirmed, invalid = rebuild_bindings(connection, source, blocks, parsed)
+    blocked = {row['main_anchor_block_id'] for row in connection.execute(
+        "SELECT b.main_anchor_block_id FROM source_binding b WHERE b.source_id=? AND "
+        "(b.confirmation_status='migrated' OR EXISTS (SELECT 1 FROM source_binding other "
+        "WHERE other.question_id=b.question_id AND other.id!=b.id AND other.active=1 "
+        "AND other.confirmation_status!='migrated'))", (source['id'],))}
+    confirmed = [draft for draft in confirmed if draft.main_anchor_block_id not in blocked]
     bound = {draft.main_anchor_block_id for draft in confirmed}
     candidates = [draft for draft in parsed.candidates if draft.main_anchor_block_id not in bound]
     published = list(confirmed)
     for draft in parsed.published:
         if draft.main_anchor_block_id in bound:
             continue
-        if draft.main_anchor_block_id in invalid or identity_matches(connection, draft):
+        if draft.main_anchor_block_id in invalid | blocked or identity_matches(connection, draft):
             candidates.append(replace(draft, confirmation_status="pending"))
         else:
             published.append(draft)

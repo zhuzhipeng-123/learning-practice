@@ -1,1 +1,14 @@
-for(const button of document.querySelectorAll('[data-review-question]')){button.addEventListener('click',async()=>{button.disabled=true;try{button.dataset.requestKey ||= crypto.randomUUID();const data=await readResponse(await fetch(`/api/questions/${button.dataset.reviewQuestion}/start-review`,{method:'POST',headers:{'X-Requested-With':'learning-practice','Idempotency-Key':button.dataset.requestKey}}));location.href=`/practice/${data.task_id}`;}catch(error){document.querySelector('#review-result').textContent=error.message;}finally{button.disabled=false;}});}
+for (const button of document.querySelectorAll('[data-review-question]')) {
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    const output = button.closest('[data-review-kind]')?.querySelector('[role="status"]') || document.querySelector('#review-result');
+    try {
+      const data = await savedRequest(`learning-review-${button.dataset.reviewQuestion}`, `/api/questions/${button.dataset.reviewQuestion}/start-review`, {});
+      if (data.version_conflict) {
+        output.textContent = data.message;
+        const link = document.createElement('a'); link.href = `/practice/${data.task_id}`; link.textContent = '继续已安排的版本 →'; output.append(link);
+      } else location.href = `/practice/${data.task_id}`;
+    } catch (error) { output.textContent = error.message; }
+    finally { button.disabled = false; }
+  });
+}

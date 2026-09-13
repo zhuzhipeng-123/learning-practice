@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
 import httpx
@@ -21,6 +21,7 @@ from app.services.model_json import ModelJSONError, parse_model_json
 from app.services.module_jobs import run_module_job
 from app.services.practice import adopt_theory_evaluation
 from app.services.reflections import save_user_reflection
+from tests.interview_fixtures import feedback_json
 from tests.test_practice_review import make_plan, seed_question
 from tests.test_repair_business import submitted_theory
 
@@ -80,7 +81,8 @@ def test_module_settings_page_persists_independent_prompts():
         assert after['credentials'] == {'agnes': False, 'openrouter': False}
 
 
-def test_interview_dialogue_requires_explicit_view_and_answer_retry_is_idempotent():
+def test_interview_dialogue_requires_explicit_view_and_answer_retry_is_idempotent(monkeypatch):
+    monkeypatch.setattr('app.services.current_practice.local_today', lambda: date(2026, 9, 11))
     from app.storage.database import connect_database
     with TestClient(app) as client:
         database = connect_database(app.state.database_path)
@@ -98,7 +100,9 @@ def test_interview_dialogue_requires_explicit_view_and_answer_retry_is_idempoten
         page = client.get(f'/interview/{session}')
         assert page.status_code == 200 and 'private saved dialogue' not in page.text
         response = client.post(f'/api/interviews/{session}/dialogue',headers=HEADERS)
-        assert response.json()['turns'] == [{'role':'user','content':'private saved dialogue'}]
+        turns = response.json()['turns']
+        assert len(turns) == 1 and turns[0]['role'] == 'user' and turns[0]['content'] == 'private saved dialogue'
+        assert turns[0]['id'] == first.json()['turn_id'] and not turns[0]['is_feedback']
         database = connect_database(app.state.database_path)
         try:
             assert database.execute('SELECT COUNT(*) FROM question_exposure').fetchone()[0] == 1
@@ -140,7 +144,7 @@ def test_followup_and_feedback_use_distinct_prompts_and_do_not_add_tasks(databas
 
     def complete(messages, **kwargs):
         seen.append(messages)
-        return SimpleNamespace(content='one followup or feedback', model='fake')
+        return SimpleNamespace(content=json.dumps({'question':'one followup question', 'reference_text':'complete matching reference answer'}) if len(seen) == 1 else feedback_json(messages), model='fake')
 
     fake = SimpleNamespace(complete=complete)
     first = run_module_job(database, 'interview_followup', session, 'followup', fake)
@@ -184,7 +188,7 @@ def test_late_followup_does_not_append_to_changed_dialogue(database):
     session = seed_interview(database)
     def complete(*args, **kwargs):
         add_turn(database, session, 'user', 'new information', NOW)
-        return SimpleNamespace(content='stale followup',model='fake')
+        return SimpleNamespace(content=json.dumps({'question':'stale followup', 'reference_text':'matching reference answer'}),model='fake')
     with pytest.raises(ModelJobError, match='对话已更新'):
         run_module_job(database, 'interview_followup', session, 'late', SimpleNamespace(complete=complete))
     assert database.execute("SELECT COUNT(*) FROM interview_turn WHERE role='assistant'").fetchone()[0] == 0
@@ -201,7 +205,7 @@ def test_model_failure_keeps_prompt_snapshot_and_retry_uses_same_configuration(d
     def complete(messages, **kwargs):
         assert 'first prompt' in messages[0]['content']
         assert 'changed prompt' not in messages[0]['content']
-        return SimpleNamespace(content='followup',model='fake')
+        return SimpleNamespace(content=json.dumps({'question':'followup', 'reference_text':'matching reference answer'}),model='fake')
     run_module_job(database, 'interview_followup', session, 'retry', SimpleNamespace(complete=complete))
     assert database.execute("SELECT COUNT(*) FROM interview_turn WHERE role='user'").fetchone()[0] == 1
     assert get_module_config(database, 'interview_followup')['provider'] == 'openrouter'

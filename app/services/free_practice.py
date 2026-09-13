@@ -60,6 +60,7 @@ def add_free_practice(
     only_new: bool = True,
     question_type: str | None = None,
 ) -> FreePracticeResult:
+    only_new = True  # Free original practice never turns a submitted original into a new one.
     payload = {"plan_id": plan_id, "theme": theme, "count": count, 'only_new': only_new}
     if question_type is not None:
         if question_type not in {'code', 'theory'}:
@@ -70,9 +71,7 @@ def add_free_practice(
         return FreePracticeResult(**previous)
     if count <= 0:
         raise ValueError("count must be positive")
-    if not source_checked:
-        raise ValueError("free practice requires a source freshness check")
-    candidates = find_new_originals(connection, '' if selected_ids is not None else theme, only_new, question_type)
+    candidates = find_new_originals(connection, '' if selected_ids is not None else theme, True, question_type)
     if selected_ids is not None:
         candidates = [row for row in candidates if row['id'] in selected_ids]
     generator = random.Random(random_seed)

@@ -3,24 +3,32 @@
 {% block content %}
 <article data-task-id="{{ task.id }}" data-question-id="{{ task.question_id }}" data-task-status="{{ task.status }}" data-question-type="{{ task.question_type }}" data-variant="{{ 'true' if derivation else 'false' }}">
   <p class="muted">{{ {'daily':'今日练习','free_practice':'自由练习','review':'复习','interview':'面试练习'}.get(task.origin,'练习') }} · {{ {'pending':'待练习','in_progress':'进行中','completed':'已完成','cancelled':'已从计划移出'}.get(task.status,task.status) }}</p>
-  <p class="muted">{{ task.category_path }}</p>{% if derivation %}<h2>{{ '代码' if task.question_type == 'code' else '八股' }}变种练习</h2><div class="prose" style="white-space:pre-wrap">{{ task.prompt }}</div>{% else %}<h2>{{ task.prompt }}</h2>{% endif %}
+  {% if has_correction %}<p class="notice">本版本有已核对的内容校正，原题或参考不能直接作为完整依据。请点击“查看参考材料”，先核对校正说明，再练习。</p>{% endif %}
+  <p class="muted">{{ task.category_path }}</p>{% if derivation %}<h2>{{ '代码' if task.question_type == 'code' else '八股' }}变种练习</h2><div id="generated-question" class="prose" style="white-space:pre-wrap">{{ task.prompt }}</div>{% else %}<h2>{{ task.prompt }}</h2>{% endif %}
+  {% if task.question_version_id != task.current_version_id %}<p class="notice">题库已有新版本；本次仍按安排时的内容练习，历史答案与复习依据保持原样。<a href="/questions/{{ task.question_id }}/history">查看版本记录</a></p>{% endif %}
+  {% if interview_derivation %}<p class="notice">来自<a href="/interview/{{ interview_derivation.session_id }}">面试追问</a></p>{% endif %}
+  {% if reference_verification.kind != 'source' %}<p class="notice">{{ '本次练习版本的参考已由你核对。' if reference_verification.verified else '本次练习版本的参考待核对，不能用于自动评分；你仍可采用自己的评价。' }} <a href="/questions/{{ task.question_id }}/history">修改题干、答案或核验状态</a></p>{% endif %}
+  {% if task.question_type == 'theory' and materials | selectattr('role','equalto','reference') | selectattr('kind','equalto','media') | list %}<p class="notice">参考含图片。当前自动评价只读取文字，会提示依据不足；请看图核对后采用自己的评价。</p>{% endif %}
   {% if derivation %}<p class="notice">模型变种题 · 基于「{{ derivation.prompt }}」。参考答案由模型生成，可在评价时自行核对和修正。</p>{% endif %}
   {% for material in materials if material.role == 'prompt' and material.kind == 'media' and material.status == 'complete' %}
     <img src="/api/tasks/{{ task.id }}/materials/{{ material.block_id }}" alt="题干原图" style="max-width:100%;height:auto">
   {% endfor %}
   {% if task.status != 'completed' and task.status != 'cancelled' %}
     {% if task.question_type == "code" %}
-      <label>备注（可选）<textarea id="note"></textarea></label>
+      <label>备注（可选）<textarea id="note" maxlength="20000"></textarea></label>
       <button data-code-result="can_solve">会做</button>
       <button data-code-result="cannot_solve">不会做</button>
     {% else %}
-      <label>回答<textarea id="answer" rows="10"></textarea></label>
+      <label>回答<textarea id="answer" rows="10" maxlength="30000"></textarea></label>
       <button id="submit-theory">保存回答</button>
     {% endif %}
   {% elif task.status == 'completed' %}
     <p>这次任务已完成，作答已保存。</p>
+    {% if next_task %}<a class="button-link" href="{{ '/interview/' + next_task.session_id if next_task.session_id else '/practice/' + next_task.id }}">继续下一题 →</a>{% else %}<a href="/">返回今天看进度 →</a>{% endif %}
+    <p id="evaluation-summary">{{ '自评：会做' if latest and latest.code_self_result == 'can_solve' else '自评：不会做，已加入复习' if latest and latest.code_self_result else '评价：' + {'aligned':'通过','needs_review':'需要复习','unable_to_assess':'依据不足'}.get(adopted.verdict,'待评价') if adopted else '回答已保存，等待评价。' }}</p>
+    {% if latest and latest.review_round_id %}<p id="review-credit" class="muted">{{ '本次已计入有效通过。' if counted else '本次未增加有效通过：需采用通过评价、独立作答，同一天只记一次；查看答案后需间隔24小时。' }}</p>{% endif %}
     <button id="show-saved">查看已提交作答与评价</button>
-    {% if job and job.status != 'complete' %}<p>评价状态：{{ job.status }}{% if job.error %} · {{ job.error }}{% endif %}</p>
+    {% if job and job.status != 'complete' %}<p id="evaluation-job-state">评价状态：{{ {'pending':'等待评价','running':'正在评价','failed':'评价未完成，可重试'}.get(job.status,job.status) }}{% if job.error %} · {{ job.error }}{% endif %}</p>
       <button id="run-evaluation" data-job-id="{{ job.id }}">开始评价 / 按原设置重试</button>
     {% endif %}
     {% if task.question_type == 'theory' and latest %}
@@ -35,6 +43,7 @@
   <section id="reference" hidden><h3>参考材料</h3><div id="reference-text" class="prose" style="white-space:pre-wrap"></div><div id="reference-media"></div></section>
   <pre id="result" hidden aria-live="polite" style="white-space:pre-wrap"></pre>
   <p><a href="{{ '/free-practice' if task.origin == 'free_practice' else '/' }}">{{ '返回自由练习' if task.origin == 'free_practice' else '返回任务' }}</a> · <a href="/review">进入复习库</a></p>
+  <p><a href="/questions/{{ task.question_id }}/history">这道题的全部记录</a> · <button id="toggle-classic" data-classic="{{ 'true' if task.is_classic else 'false' }}">{{ '取消经典标记' if task.is_classic else '标为经典面试题' }}</button></p>
 </article>
 <script src="{{ asset_url('practice.js') }}"></script>
 {% endblock %}

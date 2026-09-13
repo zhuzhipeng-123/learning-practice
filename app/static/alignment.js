@@ -4,15 +4,26 @@
   if (!output) return;
   const labels = {excluded:'不符合标题规则，停止新抽题（历史保留）',added:'新增题目',updated:'修改题目',removed:'确认移除（历史保留）',missing:'原位置缺失，暂停新抽题待核验',restored:'恢复题目',modules_added:'新增目录 / 标题',modules_removed:'移除目录 / 标题',modules_updated:'调整目录 / 标题'};
   const decisions = {single:'单题 / 多种解法',split:'建议拆题',note:'知识笔记',missing:'资料不足'};
-  let timer, watching = false;
+  let timer, watching = false, polling = false, repoll = false, sources = [];
+  const submitting = new Set();
+  function updateButtons() {
+    buttons.forEach(button => {
+      const id = button.dataset.alignSource;
+      const related = source => !id || (source.member_source_ids || [source.id]).includes(id);
+      button.disabled = submitting.has('') || submitting.has(id) || (!id && submitting.size > 0)
+        || sources.some(source => related(source) && (source.running || (source.member_source_ids || [source.id]).some(member => submitting.has(member))));
+    });
+  }
   function line(parent, tag, value) { const node=document.createElement(tag);node.textContent=value;parent.append(node);return node; }
   function render(sources) {
     output.hidden=false;output.replaceChildren();
     for (const source of sources) {
       const box=document.createElement('article');output.append(box);
-      const summary=JSON.parse(source.summary_json || '{}');
+      let summary = {};
+      try { summary=JSON.parse(source.summary_json || '{}') || {}; }
+      catch { line(box,'p','这份历史报告暂时无法解析，可重新对齐；其他来源仍可操作。'); }
       if (summary.change_note) line(box,'p',`你的改动说明：${summary.change_note}`);
-      if (summary.user_review) {line(box,'p',`模型复核：${summary.user_review.review}`); for (const item of summary.user_review.unresolved) line(box,'p',`待核验：${item}`);}
+      if (summary.user_review) {line(box,'p',`模型复核：${summary.user_review.review}`); for (const item of summary.user_review.unresolved || []) line(box,'p',`待核验：${item}`);}
       if (summary.review_error) line(box,'p',`原文对齐已保留，模型复核未完成：${summary.review_error}`);
       line(box,'h4',`${source.question_type==='theory'?'八股':'代码'} · ${source.running ? '正在对齐…' : source.sync_status==='failed' ? '读取失败' : '最近一次对齐结果'}`);
       if (source.last_check_at) line(box,'p',`检查时间：${new Date(source.last_check_at).toLocaleString()}`);
@@ -40,7 +51,7 @@
       if (source.running) line(box,'p',summary.analysis?.status==='running' ? `大模型分析中：${summary.analysis.processed} / ${summary.analysis.total} 条` : '正在检查文档版本、题目边界和图片 / 表格，请稍候。');
       const changes=summary.changes;
       if (changes) {
-        line(box,'p',`新增 ${changes.added.length} · 修改 ${changes.updated.length} · 确认移除 ${changes.removed.length} · 缺失待核验 ${changes.missing.length} · 未变化 ${changes.unchanged}`);
+        line(box,'p',`新增 ${changes.added?.length || 0} · 修改 ${changes.updated?.length || 0} · 确认移除 ${changes.removed?.length || 0} · 缺失待核验 ${changes.missing?.length || 0} · 未变化 ${changes.unchanged || 0}`);
         for (const [key,label] of Object.entries(labels)) {
           if (!changes[key]?.length) continue;
           const details=line(box,'details','');line(details,'summary',`${label}（${changes[key].length}）`);
@@ -51,21 +62,23 @@
       if (summary.candidate_count) line(box,'p',`待确认候选 ${summary.candidate_count} 条；需在题库管理中确认后进入抽题。`);
       const analysis=summary.analysis;
       if (analysis) {
-        line(box,'p',analysis.status==='not_needed' ? '没有需要模型判断的候选。' : `大模型已分析 ${analysis.processed} / ${analysis.total} 条${analysis.errors.length ? '，未全部完成' : ''}。`);
-        for (const error of analysis.errors) line(box,'p',`分析失败：${error}。可修复配置后再次点击对齐。`);
-        if (analysis.suggestions.length) {
+        line(box,'p',analysis.status==='not_needed' ? '没有需要模型判断的候选。' : `大模型已分析 ${analysis.processed || 0} / ${analysis.total || 0} 条${analysis.errors?.length ? '，未全部完成' : ''}。`);
+        for (const error of analysis.errors || []) line(box,'p',`分析失败：${error}。可修复配置后再次点击对齐。`);
+        if (analysis.suggestions?.length) {
           const details=line(box,'details','');line(details,'summary','查看大模型的逐条分析');
-          for (const item of analysis.suggestions) line(details,'p',`${item.title}：${decisions[item.decision]}。${item.reason}${item.parts.length ? '；建议：'+item.parts.join(' / ') : ''}`);
+          for (const item of analysis.suggestions) line(details,'p',`${item.title}：${decisions[item.decision]}。${item.reason}${item.parts?.length ? '；建议：'+item.parts.join(' / ') : ''}`);
         }
       }
     }
   }
   async function poll() {
+    if (polling) { repoll = true; return; }
+    polling = true; clearTimeout(timer);
     try {
-      const data=await readResponse(await fetch('/api/source-status'));
+      const data=await requestJSON('/api/source-status');
+      sources = data.sources; updateButtons();
       const running=data.sources.some(source=>source.running);
       if (watching || running) render(data.sources);
-      buttons.forEach(button=>button.disabled=running);
       if (running) { watching=true;timer=setTimeout(poll,2000); }
       else if (watching) {
         watching=false;
@@ -75,17 +88,19 @@
     } catch(error) {
       output.hidden=false;line(output,'p',`${error.message} 页面将在 5 秒后重新查询后台状态。`);
       timer=setTimeout(poll,5000);
-    }
+    } finally { polling = false; if (repoll) { repoll = false; clearTimeout(timer); timer = setTimeout(poll, 0); } }
   }
   buttons.forEach(button=>button.addEventListener('click',async()=>{
-    buttons.forEach(item=>item.disabled=true);output.hidden=false;output.textContent='已请求重新对齐飞书：本次会读取最新内容，并分析待确认的题目边界…';
+    submitting.add(button.dataset.alignSource); updateButtons(); output.hidden=false;
+    line(output,'p','已请求重新对齐：本次会读取最新内容，并分析待确认的题目边界…');
     try {
       clearTimeout(timer);
-      await readResponse(await fetch(button.dataset.alignSource ? `/api/sources/${button.dataset.alignSource}/sync` : '/api/sources/align-all',{method:'POST',headers:{'X-Requested-With':'learning-practice','Content-Type':'application/json'},body:JSON.stringify({change_note:document.querySelector('#alignment-note')?.value || ''})}));
+      await requestJSON(button.dataset.alignSource ? `/api/sources/${button.dataset.alignSource}/sync` : '/api/sources/align-all',{method:'POST',headers:{'X-Requested-With':'learning-practice','Content-Type':'application/json'},body:JSON.stringify({change_note:document.querySelector('#alignment-note')?.value || ''})});
       watching=true;await poll();
-    } catch(error) { output.textContent=error.message;buttons.forEach(item=>item.disabled=false); }
+    } catch(error) { line(output,'p',error.message); }
+    finally { submitting.delete(button.dataset.alignSource); updateButtons(); }
   }));
   const history=document.querySelector('#show-alignment-result');
-  history?.addEventListener('click',async()=>{try {render((await readResponse(await fetch('/api/source-status'))).sources);}catch(error){output.hidden=false;output.textContent=error.message;}});
+  history?.addEventListener('click',async()=>{try {render((await requestJSON('/api/source-status')).sources);}catch(error){output.hidden=false;output.textContent=error.message;}});
   poll();
 })();

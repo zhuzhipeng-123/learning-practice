@@ -18,6 +18,12 @@ def validate_evaluation(payload: dict[str, Any], allowed_reference_ids: set[str]
     verdict = payload.get("verdict")
     if not isinstance(verdict, str) or verdict not in ALLOWED_VERDICTS:
         raise EvaluationValidationError("invalid verdict")
+    reference_status = payload.get('reference_status')
+    if reference_status is not None:
+        if not isinstance(reference_status, str) or reference_status not in {'sufficient', 'insufficient', 'contradictory'}:
+            raise EvaluationValidationError('参考充分性状态无效')
+        if reference_status != 'sufficient' and verdict != 'unable_to_assess':
+            raise EvaluationValidationError('模型声明参考依据不足或矛盾，却给出评分；本次结果未采用，请核对或重试')
     evidence_refs = payload.get("evidence_refs")
     if not isinstance(evidence_refs, list):
         raise EvaluationValidationError("evidence_refs must be a list")
@@ -29,6 +35,8 @@ def validate_evaluation(payload: dict[str, Any], allowed_reference_ids: set[str]
             raise EvaluationValidationError(f"{field} must be a list of strings")
     if not isinstance(payload.get("brief_feedback"), str):
         raise EvaluationValidationError("brief_feedback must be text")
+    if verdict == 'aligned' and (payload['errors'] or payload['missing_points']):
+        raise EvaluationValidationError('模型结论说通过，但同时列出了错误或核心遗漏，本次未采用；请重试或手动评价')
 
 
 def adopt_model_evaluation(

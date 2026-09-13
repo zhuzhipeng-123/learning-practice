@@ -33,6 +33,15 @@ def start_review_task(
         result = {"task_id": pending["id"], "created": False}
         _save_idempotent(connection, request_key, "start_review", payload, result, datetime.now(UTC).isoformat())
         return result
+    conflict = connection.execute(
+        "SELECT id FROM task WHERE question_id=? AND status IN ('pending','in_progress') "
+        "ORDER BY created_at LIMIT 1", (question_id,),
+    ).fetchone()
+    if conflict:
+        result = {'task_id': conflict['id'], 'created': False, 'version_conflict': True,
+                  'message': '这题已有另一版本的练习，请先继续该任务；本次不会计入旧版本复习。完成后可再练旧版本。'}
+        _save_idempotent(connection, request_key, 'start_review', payload, result, datetime.now(UTC).isoformat())
+        return result
     version = connection.execute(
         "SELECT id FROM question_version WHERE question_id=? AND review_basis_id=? ORDER BY rowid DESC LIMIT 1",
         (question_id, active["review_basis_id"]),

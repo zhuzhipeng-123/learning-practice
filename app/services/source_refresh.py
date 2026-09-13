@@ -21,7 +21,7 @@ _jobs = {}
 def source_status(connection):
     location = connection.execute("PRAGMA database_list").fetchone()[2]
     rows = [dict(row) for row in connection.execute(
-        "SELECT s.id,s.question_type,s.last_check_at,s.last_check_success_at,s.last_error,"
+        "SELECT s.id,s.question_type,s.last_check_at,s.last_check_success_at,s.last_complete_sync_at,s.last_error,"
         "COALESCE((SELECT summary_json FROM alignment_run WHERE source_id=s.id ORDER BY rowid DESC LIMIT 1),"
         "(SELECT summary_json FROM sync_run WHERE source_id=s.id ORDER BY rowid DESC LIMIT 1)) AS summary_json,"
         "COALESCE((SELECT status FROM alignment_run WHERE source_id=s.id ORDER BY rowid DESC LIMIT 1),"
@@ -30,6 +30,8 @@ def source_status(connection):
         "FROM source s WHERE s.enabled=1 AND NOT EXISTS(SELECT 1 FROM source_tree_member m WHERE m.source_id=s.id AND m.root_source_id!=s.id) ORDER BY s.id")]
     with _lock:
         for row in rows:
+            row['member_source_ids'] = [row['id'], *[item[0] for item in connection.execute(
+                'SELECT DISTINCT source_id FROM source_tree_member WHERE root_source_id=? AND source_id IS NOT NULL', (row['id'],))]]
             job = _jobs.get((location, row['id']))
             row['running'] = bool(job and not job.done())
     return rows

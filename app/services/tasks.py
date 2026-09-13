@@ -26,6 +26,7 @@ def create_daily_plan(
     module_quotas: dict[str, int],
     request_key: str,
     random_seed: int | None = None,
+    required_date: date | None = None,
 ) -> dict[str, Any]:
     payload = {
         "date": plan_date.isoformat(),
@@ -36,12 +37,16 @@ def create_daily_plan(
     existing = _load_idempotent(connection, request_key, "create_daily_plan", payload)
     if existing is not None:
         return existing
+    if required_date is not None and plan_date != required_date:
+        raise ValueError('日期已变化，请回到今天安排练习')
     current = connection.execute(
         "SELECT id,code_target,theory_target FROM daily_plan WHERE plan_date=?",
         (plan_date.isoformat(),),
     ).fetchone()
     if current is not None and (current["code_target"] or current["theory_target"] or not (code_target or theory_target)):
-        return _plan_result(connection, current["id"])
+        result = _plan_result(connection, current["id"])
+        _save_idempotent(connection, request_key, 'create_daily_plan', payload, result, datetime.now().astimezone().isoformat())
+        return result
     _validate_targets(code_target, theory_target, module_quotas)
     selected, shortages = _select_questions(
         connection,
@@ -118,8 +123,8 @@ def add_tasks(
                 continue
             pending = connection.execute(
                 "SELECT id FROM task WHERE plan_id=? AND question_id=? "
-                "AND status IN ('pending', 'in_progress') AND (? IS NULL OR question_version_id=?)",
-                (plan_id, question_id, version_id if version_ids else None, version_id),
+                "AND status IN ('pending', 'in_progress')",
+                (plan_id, question_id),
             ).fetchone()
             if pending is not None:
                 continue

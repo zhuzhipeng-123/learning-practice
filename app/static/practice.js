@@ -2,10 +2,31 @@ const card = document.querySelector("[data-task-id]");
 const result = document.querySelector("#result");
 const taskId = card.dataset.taskId;
 const storageKey = `learning-submit-${taskId}`;
+const questionText = document.querySelector('#generated-question');
+if (questionText) renderModelText(questionText, questionText.textContent);
+const draft = bindDraft(document.querySelector('#answer,#note'), `learning-draft-${taskId}`);
+// A recovered older submission must not erase edits made after its response was lost.
+const remainingDraft = learningStore.get(`learning-draft-${taskId}`);
+if (card.dataset.taskStatus === 'completed' && typeof remainingDraft === 'string' && remainingDraft.trim()) {
+  const section = document.createElement('section'), label = document.createElement('label');
+  const text = document.createElement('textarea'), clear = document.createElement('button');
+  section.className = 'panel'; section.id = 'remaining-draft';
+  label.textContent = '提交后修改的草稿（尚未保存到作答，可复制另存）';
+  text.value = remainingDraft; text.readOnly = true; text.rows = 5;
+  clear.textContent = '我已另存，清除这份草稿';
+  clear.onclick = () => { learningStore.remove(`learning-draft-${taskId}`); section.remove(); };
+  label.append(text); section.append(label, clear); result.before(section);
+}
 let starting;
 try {
-  const pending = JSON.parse(sessionStorage.getItem(storageKey) || "null");
-  if (pending && card.dataset.taskStatus !== "completed") {
+  const legacy = JSON.parse(sessionStorage.getItem(storageKey) || 'null');
+  const legacyValues = legacy?.values || legacy?.body;
+  if (legacyValues && (legacyValues.answer_text || legacyValues.code_self_result)) {
+    learningStore.set(storageKey, {path:legacy.path, values:legacyValues, key:legacy.key});
+  }
+  sessionStorage.removeItem(storageKey);
+  const pending = learningStore.get(storageKey);
+  if (pending && card.dataset.taskStatus !== "completed" && typeof remainingDraft !== 'string') {
     const input = document.querySelector("#answer,#note");
     if (input) input.value = pending.values.answer_text ?? pending.values.note ?? "";
   }
@@ -19,10 +40,7 @@ function show(value) {
 async function request(path, body, key) {
   const headers = {"Content-Type": "application/json", "X-Requested-With": "learning-practice"};
   if (key) headers["Idempotency-Key"] = key;
-  const response = await fetch(path, {method: "POST", headers, body: JSON.stringify(body)});
-  const data = await readResponse(response);
-  if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data));
-  return data;
+  return requestJSON(path, {method: "POST", headers, body: JSON.stringify(body)});
 }
 
 async function ensureStarted() {
@@ -33,7 +51,7 @@ async function ensureStarted() {
   await starting;
 }
 
-// Opening an unstarted practice protects it from plan redistribution in another tab.
+// Opening an unstarted practice freezes its version; explicit redraws can retire it.
 if (card.dataset.taskStatus === 'pending') ensureStarted().catch(error => show(error.message));
 
 async function submit(path, values) {
@@ -42,29 +60,32 @@ async function submit(path, values) {
     return;
   }
   const buttons = document.querySelectorAll("[data-code-result],#submit-theory");
-  buttons.forEach(button => button.disabled = true);
+  const unlock = lockControls([...buttons, document.querySelector('#answer,#note')]);
   try {
     await ensureStarted();
-    let pending = JSON.parse(sessionStorage.getItem(storageKey) || "null");
-    if (pending && pending.values.answer_text === '') {
-      sessionStorage.removeItem(storageKey);
-      pending = null;
-    }
-    if (pending && JSON.stringify(pending.values) !== JSON.stringify(values)) {
-      throw new Error("上次提交结果尚未确认。请先恢复原答案重试，或刷新查看保存结果。");
-    }
-    if (!pending) {
-      pending = {path, key: crypto.randomUUID(), values,
-        body: {...values, entry_mode: "web", submitted_at: new Date().toISOString()}};
-      sessionStorage.setItem(storageKey, JSON.stringify(pending));
-    }
-    await request(pending.path, pending.body, pending.key);
-    sessionStorage.removeItem(storageKey);
+    const old = learningStore.get(storageKey);
+    await savedRequest(storageKey, path, {...values, entry_mode:'web',
+      submitted_at:old?.values.submitted_at || new Date().toISOString()});
+    draft.clear(values.answer_text ?? values.note);
     location.reload();
   } catch (error) {
-    show(`提交未确认：${error.message}。原请求已保留，可以重试。`);
+    show(error.definitelyRejected ? `没有保存：${error.message}` : `提交未确认：${error.message}`);
+    if (error.pending) {
+      const retry = document.createElement('button'); retry.textContent = '重试上次提交';
+      retry.onclick = async () => {
+        retry.disabled = true;
+        try {
+          await savedRequest(storageKey, error.pending.path, error.pending.values);
+          draft.clear(error.pending.values.answer_text ?? error.pending.values.note);
+          location.reload();
+        }
+        catch (failure) { show(failure.message); }
+        finally { retry.disabled = false; }
+      };
+      result.append(document.createElement('br'), retry);
+    }
   } finally {
-    buttons.forEach(button => button.disabled = false);
+    unlock();
   }
 }
 
@@ -80,9 +101,10 @@ document.querySelector("#submit-theory")?.addEventListener("click", () => submit
 function action(selector, operation) {
   const button = document.querySelector(selector);
   button?.addEventListener("click", async () => {
-    button.disabled = true;
+    const controls = ['#run-evaluation','#reevaluate'].includes(selector) ? document.querySelectorAll('#run-evaluation,#reevaluate') : [button];
+    const unlock = lockControls(controls);
     try { await operation(button); } catch (error) { show(error.message); }
-    finally { button.disabled = false; }
+    finally { unlock(); }
   });
 }
 
@@ -94,6 +116,16 @@ action("#show-reference", async () => {
   else reference.textContent = data.reference_text || '参考材料不足';
   const media = document.querySelector("#reference-media");
   media.replaceChildren();
+  if (data.reference_correction) {
+    const correction = document.createElement('section'), title = document.createElement('h4'), text = document.createElement('div');
+    title.textContent = '本版本的参考校正'; text.textContent = data.reference_correction.content;
+    correction.append(title, text);
+    for (const source of data.reference_correction.sources) {
+      const link = document.createElement('a'); link.href = source; link.textContent = source; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      correction.append(document.createElement('br'), link);
+    }
+    media.append(correction);
+  }
   for (const item of data.materials) {
     if (item.kind !== "media" || item.status !== "complete") continue;
     const img = document.createElement("img");
@@ -107,23 +139,23 @@ action("#show-reference", async () => {
 
 action("#enter-review", async () => {
   await request(`/api/questions/${card.dataset.questionId}/review`, {
-    entered_by: "explicit_click", happened_at: new Date().toISOString()
+    entered_by: "explicit_click", happened_at: new Date().toISOString(), task_id: taskId
   });
   show("已加入复习库，可从复习库开始或继续练习。");
 });
 action("#run-evaluation", async button => {
   show("正在评价，回答已保存在本地……");
-  show(evaluationText(await request(`/api/model-jobs/${button.dataset.jobId}/run`, {})));
+  await showEvaluation(await request(`/api/model-jobs/${button.dataset.jobId}/run`, {}));
 });
 action("#reevaluate", async button => {
   const keyName = `learning-reevaluate-${button.dataset.attemptId}`;
-  let key = sessionStorage.getItem(keyName);
+  let key = learningStore.get(keyName);
   if (!key) {
     key = crypto.randomUUID();
-    sessionStorage.setItem(keyName, key);
+    learningStore.set(keyName, key);
   }
   const job = await request(`/api/attempts/${button.dataset.attemptId}/reevaluate`, {}, key);
-  sessionStorage.removeItem(keyName);
+  learningStore.remove(keyName);
   // Keep the new job reachable even when the network call fails.
   let retry = document.querySelector("#run-evaluation");
   if (!retry) {
@@ -132,13 +164,13 @@ action("#reevaluate", async button => {
     retry.textContent = "按本次设置重试";
     button.after(retry);
     action("#run-evaluation", async current => {
-      show(evaluationText(await request(`/api/model-jobs/${current.dataset.jobId}/run`, {})));
+      await showEvaluation(await request(`/api/model-jobs/${current.dataset.jobId}/run`, {}));
     });
   }
-  retry.dataset.jobId = job.job_id;
+  retry.dataset.jobId = job.job_id; retry.hidden = false;
   retry.disabled = true;
   show("正在用当前设置重新评价，原回答与历史评价已保留……");
-  try { show(evaluationText(await request(`/api/model-jobs/${job.job_id}/run`, {}))); }
+  try { await showEvaluation(await request(`/api/model-jobs/${job.job_id}/run`, {})); }
   finally { retry.disabled = false; }
 });
 function evaluationText(value) {
@@ -150,6 +182,12 @@ function evaluationText(value) {
   }
   return `${labels[value.verdict] || value.verdict}${value.adopted ? '（当前采用）' : '（保留记录）'}${value.corrected_by_user ? ' · 人工评价' : ''}\n${feedback}`;
 }
+action('#toggle-classic', async button => {
+  const data = await request(`/api/questions/${card.dataset.questionId}/classic`, {is_classic:button.dataset.classic !== 'true'});
+  button.dataset.classic = String(data.is_classic);
+  button.textContent = data.is_classic ? '取消经典标记' : '标为经典面试题';
+  show(data.is_classic ? '已标为经典，可从秋招的经典题练习抽取。' : '已取消经典标记。');
+});
 action("#show-saved", async () => {
   const data = await request(`/api/tasks/${taskId}/saved-answer`, {});
   show([data.answer_text, data.code_self_result === 'can_solve' ? '自评：会做' : data.code_self_result ? '自评：不会做' : '', data.note,
@@ -160,4 +198,23 @@ action("#correct-evaluation", async button => {
     verdict: document.querySelector("#manual-verdict").value
   });
   show('已采用你的评价，复习进度已重新计算。');
+  await refreshEvaluationState();
 });
+
+async function showEvaluation(data) {
+  show(evaluationText(data));
+  await refreshEvaluationState();
+}
+async function refreshEvaluationState() {
+  try {
+    const html = new DOMParser().parseFromString(await requestText(location.pathname), 'text/html');
+    for (const id of ['evaluation-summary','review-credit','evaluation-job-state']) {
+      const current = document.getElementById(id), updated = html.getElementById(id);
+      if (current) { current.textContent = updated?.textContent || ''; current.hidden = !updated; }
+    }
+    const retry = document.querySelector('#run-evaluation');
+    if (retry) retry.hidden = !html.querySelector('#run-evaluation');
+  } catch {
+    result.append(document.createTextNode('\n记录已保存，但页面状态未刷新。可刷新页面核对。'));
+  }
+}

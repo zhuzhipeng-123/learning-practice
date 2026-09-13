@@ -33,8 +33,10 @@ def observe_missing_questions(
     if not complete_read:
         return {"pending": 0, "deleted": 0}
     bindings = connection.execute(
-        "SELECT id, question_id, main_anchor_block_id, missing_observation_count "
-        "FROM source_binding WHERE source_id=? AND confirmation_status!='migrated'",
+        "SELECT b.id, b.question_id, b.main_anchor_block_id, b.missing_observation_count "
+        "FROM source_binding b WHERE b.source_id=? AND b.confirmation_status!='migrated' "
+        "AND NOT EXISTS(SELECT 1 FROM source_binding other WHERE other.question_id=b.question_id "
+        "AND other.id!=b.id AND other.active=1 AND other.confirmation_status!='migrated')",
         (source_id,),
     ).fetchall()
     pending = 0

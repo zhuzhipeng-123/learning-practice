@@ -79,7 +79,7 @@ def test_rejected_note_stays_ignored_until_its_content_changes(database):
             assert row['status'] == ('rejected' if index == 1 else 'pending')
 
 
-def test_random_can_include_previously_done_and_remains_idempotent(database):
+def test_free_original_cannot_include_previously_done_even_if_filter_disabled(database):
     seed_question(database, 'code')
     now = datetime.now(UTC)
     plan = create_daily_plan(database, now.date(), 1, 0, {}, 'plan')
@@ -87,7 +87,7 @@ def test_random_can_include_previously_done_and_remains_idempotent(database):
     start_attempt(database, task, 'daily', now)
     submit_code(database, Submission(task, 'done', now, 'daily', code_self_result='can_solve'))
     result = add_free_practice(database, plan['plan_id'], '', 1, 'random', True, True, only_new=False)
-    assert result.added == 1
+    assert result.added == 0 and result.missing == 1
     assert add_free_practice(database, plan['plan_id'], '', 1, 'random', True, True, only_new=False) == result
 
 
@@ -130,13 +130,15 @@ def test_reflection_contains_wrong_question_and_preserves_user_note(database):
 
 def test_interview_summary_does_not_become_a_followup_or_block_continuation(database):
     from app.services.module_jobs import run_module_job
+    from tests.interview_fixtures import feedback_json
     result = prepare_interview(database, None, 'My question', '', 'interview-summary')
     session = result['session_id']
     add_turn(database, session, 'user', 'My answer', datetime.now(UTC))
-    fake = SimpleNamespace(complete=lambda *a, **k: SimpleNamespace(content='Saved summary', model='test'))
+    fake = SimpleNamespace(complete=lambda messages, **k: SimpleNamespace(content=feedback_json(messages,'Saved summary'), model='test'))
     run_module_job(database, 'interview_feedback', session, 'summary', fake)
     context = interview_context(database, session, 'interview_followup')
     assert [turn['content'] for turn in context['turns']] == ['My answer']
+    fake = SimpleNamespace(complete=lambda *a, **k: SimpleNamespace(content=json.dumps({'question':'Followup question', 'reference_text':'Matching reference answer'}), model='test'))
     followup = run_module_job(database, 'interview_followup', session, 'continue', fake)
     assert followup['result_id']
     assert database.execute('SELECT COUNT(*) FROM interview_turn').fetchone()[0] == 3
@@ -173,7 +175,7 @@ def test_change_description_reaches_model_with_actual_report(database, monkeypat
 
 
 def test_module_budgets_match_output_purpose(database):
-    assert get_module_config(database, 'interview_followup')['max_tokens'] == 1024
+    assert get_module_config(database, 'interview_followup')['max_tokens'] == 3072
     assert get_module_config(database, 'daily_reflection')['max_tokens'] == 4096
     assert get_module_config(database, 'source_parsing')['max_tokens'] == 4096
 
@@ -214,10 +216,11 @@ def test_free_practice_api_without_existing_plan_returns_question_cards():
         assert response.status_code == 200
         result = response.json()
         assert result['tasks'][0]['prompt'] == 'code prompt' and result['added'] == 1
-        assert 'freshness' not in result
+        assert result['freshness']['used_cache'] is True
+        assert result['source_checked'] is False
 
 
-def test_viewing_model_reflection_records_exposure_without_changing_activity(database):
+def test_viewing_model_reflection_does_not_expose_answers_or_change_activity(database):
     from app.services.reflections import save_model_reflection, view_model_reflection
     from app.services.review import exposed_recently
     seed_question(database, 'code')
@@ -230,5 +233,5 @@ def test_viewing_model_reflection_records_exposure_without_changing_activity(dat
     database.commit()
     assert not exposed_recently(database, task['question_id'], now)
     assert view_model_reflection(database, reflection, now)['content'] == 'A study suggestion'
-    assert exposed_recently(database, task['question_id'], now)
+    assert not exposed_recently(database, task['question_id'], now)
     assert database.execute('SELECT COUNT(*) FROM attempt').fetchone()[0] == 1
