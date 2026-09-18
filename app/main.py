@@ -17,6 +17,7 @@ from app.security import LocalRequestGuard
 from app.services.bootstrap import register_initial_sources
 from app.services.free_batches import interrupt_batches
 from app.services.interview import InterviewError
+from app.services.llm_config import normalize_model_settings
 from app.services.practice import PracticeError
 from app.services.reflections import ReflectionError
 from app.services.review import ReviewError
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
     database_path = data_directory / "learning.db"
     connection = connect_database(database_path)
     initialize_database(connection)
+    normalize_model_settings(connection)
     register_initial_sources(connection)
     interrupt_batches(connection)
     # Local single-process deployment: a prior process cannot still own these runs.

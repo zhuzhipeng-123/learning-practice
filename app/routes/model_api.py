@@ -5,12 +5,11 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.config import provider_default_model
 from app.routes.model_errors import model_error_response
 from app.services.llm_config import (
     MODULES,
+    agnes_configured,
     get_module_config,
-    provider_status,
     save_module_config,
 )
 from app.services.model_budget import OUTPUT_TOKEN_MAX, OUTPUT_TOKEN_MIN
@@ -25,7 +24,6 @@ RequestKey = Annotated[str, Header(alias="Idempotency-Key")]
 
 
 class ModuleSettings(BaseModel):
-    provider: Literal["agnes", "openrouter"]
     model: str = Field(min_length=1, max_length=200)
     prompt: str = Field(min_length=1, max_length=16_000)
     max_tokens: int = Field(ge=OUTPUT_TOKEN_MIN, le=OUTPUT_TOKEN_MAX)
@@ -33,10 +31,6 @@ class ModuleSettings(BaseModel):
 
 class ReflectionGeneration(BaseModel):
     activity_date: date
-
-
-class GlobalProvider(BaseModel):
-    provider: Literal['agnes', 'openrouter']
 
 
 class InterviewReference(BaseModel):
@@ -77,15 +71,6 @@ def read_model_reflection(reflection_id: str, database: Database):
     return view_model_reflection(database, row[0], datetime.now(UTC))
 
 
-@router.post('/model-provider')
-def set_model_provider(body: GlobalProvider, database: Database):
-    with transaction(database):
-        for module in MODULES:
-            config = get_module_config(database, module)
-            save_module_config(database, module, body.provider, provider_default_model(body.provider), config['prompt'], config['max_tokens'])
-    return {'updated': len(MODULES)}
-
-
 @router.post("/interviews/{session_id}/dialogue")
 def read_dialogue(session_id: str, database: Database):
     row = database.execute("SELECT t.question_id FROM task t JOIN interview_session s ON s.task_id=t.id WHERE s.id=?", (session_id,)).fetchone()
@@ -100,7 +85,10 @@ def read_dialogue(session_id: str, database: Database):
 
 @router.get("/model-settings")
 def model_settings(database: Database):
-    return {"modules": [get_module_config(database, module) for module in MODULES], "credentials": provider_status()}
+    return {
+        "modules": [get_module_config(database, module) for module in MODULES],
+        "credential_configured": agnes_configured(),
+    }
 
 
 @router.post("/sources/{source_id}/analyze")

@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from app.config import provider_base_url, provider_default_model
+from app.config import agnes_base_url, agnes_default_model
 
 DEFAULT_RETRY_DELAY = timedelta(seconds=60)
 
@@ -63,9 +63,9 @@ class AgnesSettings:
         if not api_key:
             raise AgnesConfigurationError("AGNES_API_KEY is not configured")
         return cls(
-            base_url=provider_base_url("agnes"),
+            base_url=agnes_base_url(),
             api_key=api_key,
-            model=provider_default_model("agnes"),
+            model=agnes_default_model(),
         )
 
 

@@ -8,11 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.config import provider_default_models
 from app.services.dashboard import day_details, heatmap, latest_reflections, module_tree
 from app.services.free_requests import ORIGINAL_LIMIT, VARIANT_LIMIT
 from app.services.learning_clock import local_now, local_today
-from app.services.llm_config import MODULES, get_module_config, provider_status
+from app.services.llm_config import MODULES, agnes_configured, get_module_config
 from app.services.model_budget import OUTPUT_TOKEN_MAX, OUTPUT_TOKEN_MIN
 from app.services.review import exposed_recently
 from app.services.source_coverage import coverage
@@ -32,7 +31,7 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
     def settings_page(request: Request, database: Database):
         modules = [get_module_config(database, module) for module in MODULES]
         return templates.TemplateResponse(request=request, name="settings.html",
-                                          context=page_context(request, modules=modules, credentials=provider_status(), provider_defaults=provider_default_models(), token_min=OUTPUT_TOKEN_MIN, token_max=OUTPUT_TOKEN_MAX))
+                                          context=page_context(request, modules=modules, credential_configured=agnes_configured(), token_min=OUTPUT_TOKEN_MIN, token_max=OUTPUT_TOKEN_MAX))
 
     @router.get("/", response_class=HTMLResponse)
     def today_page(request: Request, database: Database):

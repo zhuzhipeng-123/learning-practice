@@ -9,19 +9,14 @@ from dotenv import dotenv_values
 
 from app.adapters.agnes import AgnesClient, AgnesConfigurationError, AgnesSettings
 from app.config import (
-    DEFAULT_PROVIDER_MODELS,
     DOTENV_PATH,
-    provider_base_url,
-    provider_default_model,
+    agnes_base_url,
+    agnes_default_model,
 )
 from app.services.model_budget import OUTPUT_TOKEN_MAX, OUTPUT_TOKEN_MIN, require_input_budget
 from app.storage.transactions import transaction
 
-PROVIDERS = {
-    "agnes": "AGNES_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
-}
-DEFAULT_MODELS = DEFAULT_PROVIDER_MODELS
+AGNES_API_KEY = "AGNES_API_KEY"
 MODULES = {
     "theory_evaluation": {
         "label": "答案评价",
@@ -144,27 +139,36 @@ def get_module_config(connection, module):
     if module not in MODULES:
         raise ValueError("unknown model module")
     row = connection.execute("SELECT * FROM llm_module_settings WHERE module=?", (module,)).fetchone()
-    value = dict(row) if row else {"module": module, "provider": "agnes", "model": provider_default_model("agnes"),
+    value = dict(row) if row else {"module": module, "provider": "agnes", "model": agnes_default_model(),
                                   "prompt": MODULES[module]["prompt"], "max_tokens": MODULE_GUIDANCE[module][1]}
+    if value["provider"] != "agnes":
+        value.update(provider="agnes", model=agnes_default_model())
     purpose, recommended, rationale = MODULE_GUIDANCE[module]
     return {**value, "label": MODULES[module]["label"], 'purpose': purpose, 'recommended_tokens': recommended, 'token_rationale': rationale}
 
 
-def save_module_config(connection, module, provider, model, prompt, max_tokens):
-    if module not in MODULES or provider not in PROVIDERS:
-        raise ValueError("不支持的模块或模型服务")
+def save_module_config(connection, module, model, prompt, max_tokens):
+    if module not in MODULES:
+        raise ValueError("不支持的模型模块")
     if not model.strip() or len(model) > 200 or not prompt.strip() or len(prompt) > 16_000 or not OUTPUT_TOKEN_MIN <= max_tokens <= OUTPUT_TOKEN_MAX:
         raise ValueError(f"请填写模型 ID 和提示词，输出上限为 {OUTPUT_TOKEN_MIN}–{OUTPUT_TOKEN_MAX}")
-    if provider == "openrouter" and "/" not in model:
-        raise ValueError("OpenRouter 模型 ID 需要包含服务前缀，例如 openrouter/free 或 provider/model:free")
-    if provider == "agnes" and model.startswith("openrouter/"):
-        raise ValueError("OpenRouter 模型不能用于 Agnes 服务")
     with transaction(connection):
         connection.execute("INSERT INTO llm_module_settings VALUES (?,?,?,?,?,?) ON CONFLICT(module) "
                            "DO UPDATE SET provider=excluded.provider,model=excluded.model,prompt=excluded.prompt,"
                            "max_tokens=excluded.max_tokens,updated_at=excluded.updated_at",
-                           (module, provider, model.strip(), prompt, max_tokens, datetime.now(UTC).isoformat()))
+                           (module, "agnes", model.strip(), prompt, max_tokens, datetime.now(UTC).isoformat()))
     return get_module_config(connection, module)
+
+
+def normalize_model_settings(connection):
+    """Move current editable settings to the only supported model service."""
+    with transaction(connection):
+        connection.execute(
+            "UPDATE llm_module_settings SET provider='agnes',model=?,updated_at=? "
+            "WHERE provider!='agnes'",
+            (agnes_default_model(), datetime.now(UTC).isoformat()),
+        )
+        connection.execute("DELETE FROM provider_cooldown WHERE provider!='agnes'")
 
 
 def secret_value(name):
@@ -173,17 +177,17 @@ def secret_value(name):
     return dotenv_values(DOTENV_PATH).get(name) or ""
 
 
-def provider_status():
-    return {name: bool(secret_value(key)) for name, key in PROVIDERS.items()}
+def agnes_configured():
+    return bool(secret_value(AGNES_API_KEY))
 
 
 def client_for_config(config):
-    provider = config["provider"]
-    key_name = PROVIDERS[provider]
-    key = secret_value(key_name)
+    if config.get("provider") != "agnes":
+        raise AgnesConfigurationError("这份旧请求使用了已移除的模型服务，请按当前设置重新生成")
+    key = secret_value(AGNES_API_KEY)
     if not key:
-        raise AgnesConfigurationError(f"请在本机 .env 中配置 {key_name}")
-    return AgnesClient(AgnesSettings(provider_base_url(provider), key, config["model"]))
+        raise AgnesConfigurationError(f"请在本机 .env 中配置 {AGNES_API_KEY}")
+    return AgnesClient(AgnesSettings(agnes_base_url(), key, config["model"]))
 
 
 def freeze_request(connection, job_id, module, user_input):
