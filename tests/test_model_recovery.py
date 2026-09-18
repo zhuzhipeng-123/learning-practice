@@ -43,12 +43,12 @@ def test_reevaluation_preserves_history_and_uses_new_frozen_settings(database):
     result = submitted_theory(database)
     original = run_evaluation_job(database, result["job_id"], evaluator())
     old_config = database.execute("SELECT config_json FROM model_request WHERE job_id=?", (result["job_id"],)).fetchone()[0]
-    save_module_config(database, "theory_evaluation", "openrouter", "vendor/model:free", "new prompt", 1024)
+    save_module_config(database, "theory_evaluation", "agnes-new", "new prompt", 1024)
     job = create_reevaluation_job(database, result["attempt_id"], "new-config")
     assert create_reevaluation_job(database, result["attempt_id"], "new-config") == job
-    save_module_config(database, "theory_evaluation", "agnes", "agnes-2.5-flash", "later prompt", 2048)
+    save_module_config(database, "theory_evaluation", "agnes-later", "later prompt", 2048)
     config = json.loads(database.execute("SELECT config_json FROM model_request WHERE job_id=?", (job,)).fetchone()[0])
-    assert config["prompt"] == "new prompt" and config["provider"] == "openrouter"
+    assert config["prompt"] == "new prompt" and config["model"] == "agnes-new"
     latest = run_evaluation_job(database, job, evaluator("needs_review"))
     assert run_evaluation_job(database, job, evaluator()) == latest
     assert database.execute("SELECT adopted FROM evaluation WHERE id=?", (original,)).fetchone()[0] == 0
@@ -145,12 +145,9 @@ def test_cooldown_covers_new_jobs_other_modules_and_survives_reopen(database):
         with pytest.raises(ModelJobError, match="限流"):
             run_module_job(reopened, "daily_reflection", day, "reflection", fake)
         assert len(calls) == 1
-        # An explicitly selected independent provider is allowed.
-        save_module_config(reopened, "theory_evaluation", "openrouter", "vendor/model:free", "new", 1024)
-        independent = create_reevaluation_job(reopened, result["attempt_id"], "independent")
-        run_evaluation_job(reopened, independent, evaluator())
         reopened.execute("UPDATE provider_cooldown SET retry_at=?", ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(),))
         reopened.commit()
+        run_evaluation_job(reopened, newer, evaluator())
         run_evaluation_job(reopened, result["job_id"], evaluator())
         assert reopened.execute("SELECT next_retry_at FROM model_job WHERE id=?", (result["job_id"],)).fetchone()[0] is None
     finally:

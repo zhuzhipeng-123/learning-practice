@@ -114,7 +114,7 @@ def analyze_alignment(connection, source_id, result, client=None):
         except Exception as error:
             logging.getLogger(__name__).exception("Source model analysis failed: %s", source_id)
             analysis['errors'].append(str(error))
-            # A provider failure should not make dozens of repeated calls.
+            # A model-service failure should not make dozens of repeated calls.
             break
         finally:
             _save_summary(connection, result)

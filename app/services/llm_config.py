@@ -1,4 +1,4 @@
-"""Independent module settings; provider credentials never enter the database."""
+"""Independent module settings; the Agnes credential never enters the database."""
 
 import hashlib
 import json

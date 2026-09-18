@@ -94,12 +94,12 @@ def test_interview_learning_context_distinguishes_unseen_from_unsubmitted(databa
 def test_failed_continuation_keeps_config_across_new_browser_request_keys(database):
     from app.services.llm_config import save_module_config
     session, answer = session_with_answer(database)
-    save_module_config(database, 'interview_followup', 'agnes', 'old-model', 'My interview style', 2048)
+    save_module_config(database, 'interview_followup', 'old-model', 'My interview style', 2048)
     def failure(*a, **k):
         raise RuntimeError('model offline')
     with pytest.raises(ModelJobError):
         run_module_job(database, 'interview_followup', session, 'browser-key-1', SimpleNamespace(complete=failure), expected_revision=answer)
-    save_module_config(database, 'interview_followup', 'agnes', 'new-model', 'Changed style', 3072)
+    save_module_config(database, 'interview_followup', 'new-model', 'Changed style', 3072)
     calls = []
     def success(messages, **kwargs):
         calls.append(messages)

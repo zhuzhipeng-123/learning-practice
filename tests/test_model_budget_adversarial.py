@@ -23,7 +23,7 @@ from tests.test_sync import blocks
 def test_concurrent_same_selection_key_cannot_run_the_same_partition_twice(database):
     pool(database, 4, 'theory')
     config = get_module_config(database, 'practice_selection')
-    save_module_config(database, 'practice_selection', 'agnes', 'test', config['prompt'], 128)
+    save_module_config(database, 'practice_selection', 'test', config['prompt'], 128)
     database.commit()
     started, release = Event(), Event()
     calls = []
@@ -68,7 +68,7 @@ def test_source_format_retry_uses_original_settings_after_user_edits(database):
         context = json.loads(messages[1]['content'])
         calls.append((context, kwargs['max_tokens']))
         if len(calls) == 1:
-            save_module_config(database, 'source_parsing', 'agnes', 'changed-model', 'Changed prompt', 8192)
+            save_module_config(database, 'source_parsing', 'changed-model', 'Changed prompt', 8192)
             return SimpleNamespace(content='{"suggestions": INVALID}', model='test')
         return SimpleNamespace(content=json.dumps({'suggestions': [
             {'anchor_id': item['anchor_id'], 'decision': 'single', 'reason': 'Kept full conditions', 'parts': []}
@@ -96,7 +96,7 @@ def test_source_change_during_partitioned_selection_does_not_assign_a_different_
     monkeypatch.setattr('app.services.free_batches.schedule_batch', lambda *a: None)
     drafts = pool(database, 6, 'code')
     config = get_module_config(database, 'practice_selection')
-    save_module_config(database, 'practice_selection', 'agnes', 'test', config['prompt'], 128)
+    save_module_config(database, 'practice_selection', 'test', config['prompt'], 128)
     database.commit()
     location = Path(database.execute('PRAGMA database_list').fetchone()[2])
     calls = []

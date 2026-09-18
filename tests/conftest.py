@@ -14,7 +14,6 @@ def isolated_app_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Lifespan must never open the user's learning database during a test."""
     monkeypatch.setenv("LEARNING_DATA_DIR", str(tmp_path / "app-data"))
     monkeypatch.setenv("AGNES_API_KEY", "")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "")
     monkeypatch.setattr('app.services.bootstrap.load_initial_sources', lambda: [
         ('source-code', 'demo-code-document', 'https://example.feishu.cn/wiki/demo-code', 'code'),
         ('source-theory', 'demo-theory-document', 'https://example.feishu.cn/wiki/demo-theory', 'theory'),

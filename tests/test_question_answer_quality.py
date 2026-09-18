@@ -109,7 +109,7 @@ def test_semantic_failure_has_one_revision_and_no_partial_publication(database, 
 
 def test_checker_outage_prevents_question_publication(database, monkeypatch):
     def unavailable(*args, **kwargs):
-        raise RuntimeError('fixture provider outage')
+        raise RuntimeError('fixture model-service outage')
     monkeypatch.setattr('app.services.question_quality.client_for_config', lambda _:SimpleNamespace(complete=unavailable))
     fake = SimpleNamespace(complete=lambda *a, **k:reply({'question':'工具调用为什么需要幂等？','reference_text':'相同操作重试时应只产生一次业务效果。'}))
     with pytest.raises(ModelJobError):

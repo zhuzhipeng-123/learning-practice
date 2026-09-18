@@ -31,14 +31,14 @@ The authoritative design is `docs/original-learning-app-plan.md`. Do not treat t
 - Wiki sources are recursive roots, not single documents. Enumerate every descendant with explicit pagination completion; retain each document's full Wiki path. A failed/partial tree traversal cannot prove document removal. Report document discovery, unsupported types, failures and model analysis separately.
 - Theory module quotas follow the source heading tree with one expandable root. Explicit new batch draws may retire unfinished daily tasks, including started tasks; never overwrite submitted answers or change their frozen versions. Synchronization alone cannot edit plans.
 - Heatmap intensity counts distinct submitted main tasks per Shanghai date; viewing pages and model-only turns do not count. Day details group the day's latest task answers by code self-assessment or adopted theory assessment, including pending and unknown, and link to protected answer/dialogue views.
-- Use Agnes as the primary model for all modules; OpenRouter Nex is an explicitly selected backup. Preserve independent editable prompts and existing request snapshots.
+- Use Agnes as the only model service for all modules. Preserve independent editable prompts and existing request snapshots.
 - Repair work is not complete until its regression checks pass; keep README and status reports factual.
-- Model evaluation, interview follow-up, interview feedback, daily reflection, source boundary analysis, and topic selection have separate editable prompts and model selections. Keep provider credentials in ignored local configuration, never SQLite or exports.
-- Credential names are exactly AGNES_API_KEY and OPENROUTER_API_KEY; do not introduce a shared ambiguous API_KEY alias.
-- Support Agnes and OpenRouter through Chat Completions. Provider keys are isolated; switching provider must never reuse another provider's key. Never silently fall back to a different model or provider.
+- Model evaluation, interview follow-up, interview feedback, daily reflection, source boundary analysis, and topic selection have separate editable prompts and model selections. Keep the Agnes credential in ignored local configuration, never SQLite or exports.
+- The credential name is exactly AGNES_API_KEY; do not introduce a shared ambiguous API_KEY alias.
+- Support Agnes through Chat Completions. Never silently fall back to a different model service.
 - Persist the exact prompt and model configuration used for a model job so later edits do not rewrite its audit history.
 - Re-evaluation creates a new job for the same saved attempt with the current settings; retries retain their snapshot. Preserve human adoption and never duplicate learning completion.
-- Persist provider cooldowns after HTTP 429 across modules in the same database. Honor Retry-After and require explicit retry after the wait; never switch providers automatically.
+- Persist the Agnes cooldown after HTTP 429 across modules in the same database. Honor Retry-After and require explicit retry after the wait.
 
 ## Fixed business rules
 
@@ -114,14 +114,14 @@ The authoritative design is `docs/original-learning-app-plan.md`. Do not treat t
 - Homepage practice lists and progress reflect saved base code/theory targets only; extra practice belongs on its own pages. Free practice has separate code/theory draws and restores the same-day accepted batches. Old unfinished free tasks are retired after explicit replacement or day rollover. Changed inputs are unapplied until saved and never redraw a confirmed batch merely by navigation.
 - Theory question anchors must be H1, H2, or H3 headings. H4-H6 and ordinary paragraphs are reference content, never standalone questions. Empty container headings remain modules. Exclude legacy non-heading questions from future allocation without deleting tasks, versions, or answers.
 - Alignment accepts an optional user change description, retains it in the run report, and supplies it to model review. The description never proves deletion or replaces complete source discovery.
-- Default screens show learning outcomes, not API JSON, internal IDs, or provider configuration. Keep independent editable prompts in collapsed sections with purpose and output-budget rationale. Rollover refreshes clean pages on local-day change; dirty forms must retain text.
+- Default screens show learning outcomes, not API JSON, internal IDs, or service configuration. Keep independent editable prompts in collapsed sections with purpose and output-budget rationale. Rollover refreshes clean pages on local-day change; dirty forms must retain text.
 
 ## Current defaults, not immutable user requirements
 
 - Bind only to `127.0.0.1` and use `Asia/Shanghai`.
 - Pure notes and ambiguous compound sections become review candidates; explicit questions can publish automatically.
 - Answer exposure blocks valid passes for 24 hours.
-- Independent model jobs may run concurrently without a fixed interval. Each job retains its own lease to prevent duplicate execution; provider cooldowns apply only after a real HTTP 429.
+- Independent model jobs may run concurrently without a fixed interval. Each job retains its own lease to prevent duplicate execution; the shared Agnes cooldown applies only after a real HTTP 429.
 
 Keep these defaults easy to review. Do not describe them as confirmed hard constraints.
 
@@ -143,7 +143,7 @@ Keep these defaults easy to review. Do not describe them as confirmed hard const
 - Keep files around 150 lines where practical.
 - Add comments for non-obvious intent, data shape, side effects, and edge cases.
 - Do not add abstractions or features before a current phase requires them.
-- Keep runtime defaults and environment-backed paths, timezone, provider endpoints, and provider models in `app/config.py`; do not repeat machine paths, UTC offsets, or provider defaults in routes and services.
+- Keep runtime defaults and environment-backed paths, timezone, Agnes endpoint, and Agnes default model in `app/config.py`; do not repeat machine paths, UTC offsets, or model defaults in routes and services.
 - Convert timestamps through `app.services.learning_clock` for local-day behavior. SQL must not assume a fixed `+8 hours` offset.
 - Delete code only after repository-wide reference checks and relevant regression tests show that it is not part of the current application or compatibility surface.
 

@@ -3,10 +3,10 @@ from datetime import date
 import pytest
 
 from app.config import (
+    agnes_base_url,
+    agnes_default_model,
     initial_sources_path,
     local_timezone_name,
-    provider_base_url,
-    provider_default_model,
 )
 from app.services.learning_clock import utc_bounds_for_local_days
 from app.services.tasks import create_daily_plan
@@ -16,13 +16,13 @@ def test_runtime_settings_use_environment_overrides(monkeypatch, tmp_path):
     source_config = tmp_path / "sources.json"
     monkeypatch.setenv("LEARNING_TIMEZONE", "Asia/Tokyo")
     monkeypatch.setenv("LEARNING_SOURCE_CONFIG", str(source_config))
-    monkeypatch.setenv("OPENROUTER_BASE_URL", "https://gateway.example/v1/")
-    monkeypatch.setenv("OPENROUTER_MODEL", "example/model")
+    monkeypatch.setenv("AGNES_BASE_URL", "https://gateway.example/v1/")
+    monkeypatch.setenv("AGNES_MODEL", "example-model")
 
     assert local_timezone_name() == "Asia/Tokyo"
     assert initial_sources_path() == source_config.resolve()
-    assert provider_base_url("openrouter") == "https://gateway.example/v1"
-    assert provider_default_model("openrouter") == "example/model"
+    assert agnes_base_url() == "https://gateway.example/v1"
+    assert agnes_default_model() == "example-model"
 
 
 def test_invalid_runtime_timezone_is_rejected(monkeypatch):

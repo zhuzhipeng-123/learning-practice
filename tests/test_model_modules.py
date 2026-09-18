@@ -10,10 +10,10 @@ from app.adapters.agnes import AgnesConfigurationError
 from app.main import app
 from app.services.interview import add_turn, end_session, start_session
 from app.services.llm_config import (
-    DEFAULT_MODELS,
     MODULES,
     client_for_config,
     get_module_config,
+    normalize_model_settings,
     save_module_config,
 )
 from app.services.model_jobs import ModelJobError, run_evaluation_job
@@ -36,41 +36,52 @@ def test_json_wrapper_compatibility_is_limited_to_one_complete_value():
             parse_model_json(invalid)
 
 
-def test_openrouter_uses_own_key_and_standard_chat_format(database, monkeypatch):
+def test_agnes_uses_configured_key_and_standard_chat_format(database, monkeypatch):
     monkeypatch.setenv("AGNES_API_KEY", "agnes-only")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "router-only")
-    config = save_module_config(database, "interview_followup", "openrouter", "vendor/example:free", "custom interview", 1024)
+    config = save_module_config(database, "interview_followup", "agnes-custom", "custom interview", 1024)
     captured = {}
 
     def post(url, **kwargs):
         captured.update(url=url, **kwargs)
-        return httpx.Response(200, json={"model": "vendor/example:free", "choices": [{"message": {"content": "question?"}}]})
+        return httpx.Response(200, json={"model": "agnes-custom", "choices": [{"message": {"content": "question?"}}]})
 
     monkeypatch.setattr(httpx, "post", post)
     reply = client_for_config(config).complete([{"role": "user", "content": "sample"}], 1024)
     assert reply.content == "question?"
-    assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
-    assert captured["headers"]["Authorization"] == "Bearer router-only"
-    assert captured["json"]["model"] == "vendor/example:free"
+    assert captured["url"] == "https://apihub.agnes-ai.com/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer agnes-only"
+    assert captured["json"]["model"] == "agnes-custom"
     assert captured["json"]["messages"] == [{"role": "user", "content": "sample"}]
-    assert "agnes-only" not in json.dumps(config)
-    monkeypatch.setenv("OPENROUTER_API_KEY", "")
-    with pytest.raises(AgnesConfigurationError, match="OPENROUTER_API_KEY"):
+    monkeypatch.setenv("AGNES_API_KEY", "")
+    with pytest.raises(AgnesConfigurationError, match="AGNES_API_KEY"):
         client_for_config(config)
 
 
-def test_provider_model_mismatch_is_rejected(database):
-    assert DEFAULT_MODELS['openrouter'] == 'nex-agi/nex-n2.5-mini:free'
-    for provider, model in [('openrouter','agnes-2.5-flash'), ('agnes','openrouter/free')]:
-        with pytest.raises(ValueError):
-            save_module_config(database, 'theory_evaluation', provider, model, 'valid prompt', 1024)
+def test_legacy_model_settings_are_normalized_to_agnes(database):
+    database.execute(
+        "INSERT INTO llm_module_settings VALUES (?,?,?,?,?,?)",
+        ('theory_evaluation', 'legacy-service', 'legacy-model', 'valid prompt', 1024, NOW.isoformat()),
+    )
+    database.execute(
+        "INSERT INTO provider_cooldown VALUES (?,?)",
+        ('legacy-service', NOW.isoformat()),
+    )
+    database.commit()
+
+    normalize_model_settings(database)
+
+    config = get_module_config(database, 'theory_evaluation')
+    assert config['provider'] == 'agnes'
+    assert config['model'] == 'agnes-2.5-flash'
+    assert config['prompt'] == 'valid prompt'
+    assert database.execute("SELECT COUNT(*) FROM provider_cooldown").fetchone()[0] == 0
 
 
 def test_module_settings_page_persists_independent_prompts():
     with TestClient(app) as client:
         before = client.get('/api/model-settings').json()
         assert len({item['prompt'] for item in before['modules']}) == len(MODULES)
-        body = {"provider": "openrouter", "model": "vendor/free:free", "prompt": "custom <script> prompt", "max_tokens": 3072}
+        body = {"model": "agnes-custom", "prompt": "custom <script> prompt", "max_tokens": 3072}
         assert client.post('/api/model-settings/theory_evaluation', headers=HEADERS, json=body).status_code == 200
         after = client.get('/api/model-settings').json()
         assert after['modules'][0]['prompt'] == body['prompt']
@@ -78,7 +89,7 @@ def test_module_settings_page_persists_independent_prompts():
         html = client.get('/settings').text
         assert 'custom &lt;script&gt; prompt' in html
         assert 'custom <script> prompt' not in html
-        assert after['credentials'] == {'agnes': False, 'openrouter': False}
+        assert after['credential_configured'] is False
 
 
 def test_interview_dialogue_requires_explicit_view_and_answer_retry_is_idempotent(monkeypatch):
@@ -113,7 +124,7 @@ def test_interview_dialogue_requires_explicit_view_and_answer_retry_is_idempoten
 
 def test_evaluation_uses_frozen_custom_prompt_and_protects_existing_manual_result(database):
     result = submitted_theory(database)
-    save_module_config(database, 'theory_evaluation', 'agnes', 'agnes-2.5-flash', 'custom evaluator', 2048)
+    save_module_config(database, 'theory_evaluation', 'agnes-2.5-flash', 'custom evaluator', 2048)
     adopt_theory_evaluation(database, result['attempt_id'], 'needs_review', NOW, True)
     observed = []
 
@@ -196,16 +207,16 @@ def test_late_followup_does_not_append_to_changed_dialogue(database):
 
 def test_model_failure_keeps_prompt_snapshot_and_retry_uses_same_configuration(database):
     session = seed_interview(database)
-    save_module_config(database, 'interview_followup', 'agnes', 'agnes-2.5-flash', 'first prompt', 1024)
+    save_module_config(database, 'interview_followup', 'agnes-2.5-flash', 'first prompt', 1024)
     def fail(*args, **kwargs):
         raise RuntimeError('simulated transport failure')
     with pytest.raises(ModelJobError):
         run_module_job(database, 'interview_followup', session, 'retry', SimpleNamespace(complete=fail))
-    save_module_config(database, 'interview_followup', 'openrouter', 'vendor/model:free', 'changed prompt', 2048)
+    save_module_config(database, 'interview_followup', 'agnes-next', 'changed prompt', 2048)
     def complete(messages, **kwargs):
         assert 'first prompt' in messages[0]['content']
         assert 'changed prompt' not in messages[0]['content']
         return SimpleNamespace(content=json.dumps({'question':'followup', 'reference_text':'matching reference answer'}),model='fake')
     run_module_job(database, 'interview_followup', session, 'retry', SimpleNamespace(complete=complete))
     assert database.execute("SELECT COUNT(*) FROM interview_turn WHERE role='user'").fetchone()[0] == 1
-    assert get_module_config(database, 'interview_followup')['provider'] == 'openrouter'
+    assert get_module_config(database, 'interview_followup')['model'] == 'agnes-next'

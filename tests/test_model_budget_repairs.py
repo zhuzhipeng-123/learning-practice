@@ -96,7 +96,7 @@ def test_large_pool_is_partitioned_without_dropping_titles_or_matches(database):
 def test_selection_retry_keeps_pool_and_settings_after_partial_failure(database):
     pool(database, 4, 'theory')
     config = get_module_config(database, 'practice_selection')
-    save_module_config(database, 'practice_selection', 'agnes', 'frozen-model', config['prompt'], 128)
+    save_module_config(database, 'practice_selection', 'frozen-model', config['prompt'], 128)
     database.commit()
     calls = []
     failed = False
@@ -116,7 +116,7 @@ def test_selection_retry_keeps_pool_and_settings_after_partial_failure(database)
     saved_titles = {q['title'] for context in calls for q in context['questions']}
     database.execute("UPDATE question_version SET prompt='Changed after failure'")
     database.commit()
-    save_module_config(database, 'practice_selection', 'agnes', 'new-model', config['prompt'], 8192)
+    save_module_config(database, 'practice_selection', 'new-model', config['prompt'], 8192)
     result = select_by_description(database, 'Original criteria', 1, 'resume', client=model, question_type='theory')
     assert len(result) == 4 and len(calls) == 5
     assert all(q['title'] != 'Changed after failure' for context in calls for q in context['questions'])
@@ -131,7 +131,7 @@ def test_cross_partition_id_injection_never_publishes_partial_free_tasks(databas
     monkeypatch.setattr('app.services.free_batches.schedule_batch', lambda *a: None)
     pool(database, 6, 'code')
     config = get_module_config(database, 'practice_selection')
-    save_module_config(database, 'practice_selection', 'agnes', 'test', config['prompt'], 128)
+    save_module_config(database, 'practice_selection', 'test', config['prompt'], 128)
     database.commit()
     first_id = None
     def reply(messages, **kwargs):
