@@ -66,8 +66,9 @@ def generate_reference(connection, session_id, turn_id=None, client=None):
     context = reference_context(connection, session_id, turn_id)
     if saved_reference(connection, context)[0]:
         return view_reference(connection, session_id, turn_id)
-    turns = [dict(row) for row in connection.execute("SELECT role,content FROM interview_turn WHERE session_id=? ORDER BY rowid", (session_id,))]
-    context['dialogue'] = turns
+    turns = [dict(row) for row in connection.execute("SELECT id,role,content FROM interview_turn WHERE session_id=? ORDER BY rowid", (session_id,))]
+    from app.services.interview_conversation import selected_dialogue
+    context['dialogue'], context['context_window'] = selected_dialogue(turns, turn_id)
     # A fixed question has one answer-completion job, also across tabs or a lost response.
     run_module_job(connection, 'interview_reference', context['source_id'], context['source_id'], client, context)
     return view_reference(connection, session_id, turn_id)

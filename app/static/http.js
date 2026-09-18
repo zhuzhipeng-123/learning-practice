@@ -21,6 +21,10 @@ window.readResponse = async function(response) {
 window.requestJSON = async function(path, options={}, timeoutMs=options.method && options.method !== 'GET' ? 120000 : 15000) {
   return requestWithDeadline(path, options, readResponse, timeoutMs);
 };
+window.requestBlob = (path, options={}) => requestWithDeadline(path, options, async response => {
+  if (!response.ok) return readResponse(response);
+  return response.blob();
+}, 120000);
 window.requestText = async function(path, options={}) {
   return requestWithDeadline(path, options, async response => {
     if (!response.ok) throw new Error(`读取页面失败（HTTP ${response.status}），请重新读取。`);
@@ -38,40 +42,45 @@ async function requestWithDeadline(path, options, read, timeoutMs) {
 }
 
 // Persist drafts and unknown requests separately. Storage failure never prevents saving.
-window.learningStore = (() => {
-  const memory = new Map();
+function createLearningStore(storageName) {
+  const memory = new Map(), failedWrites = new Set();
   let available = true;
   return {
     get available() { return available; },
     get(key) {
-      try { return JSON.parse(localStorage.getItem(key) || 'null') ?? memory.get(key) ?? null; }
-      catch { available = false; return memory.get(key) ?? null; }
+      try {
+        const value = JSON.parse(window[storageName].getItem(key) || 'null');
+        return failedWrites.has(key) ? memory.get(key) ?? null : value;
+      } catch { available = false; return memory.get(key) ?? null; }
     },
     set(key, value) {
       memory.set(key, value);
-      try { localStorage.setItem(key, JSON.stringify(value)); }
-      catch { available = false; }
+      try { window[storageName].setItem(key, JSON.stringify(value)); failedWrites.delete(key); }
+      catch { available = false; failedWrites.add(key); }
     },
     remove(key) {
       memory.delete(key);
-      try { localStorage.removeItem(key); } catch { available = false; }
+      try { window[storageName].removeItem(key); failedWrites.delete(key); }
+      catch { available = false; failedWrites.add(key); }
     }
   };
-})();
+}
+window.learningStore = createLearningStore('localStorage');
+window.tabLearningStore = createLearningStore('sessionStorage');
 
-window.bindDraft = function(input, key) {
+window.bindDraft = function(input, key, store=learningStore) {
   if (!input) return {clear() {}};
-  const restored = learningStore.get(key);
+  const restored = store.get(key);
   if (typeof restored === 'string') input.value = restored;
   const status = document.createElement('small');
   status.className = 'muted draft-status'; status.setAttribute('role', 'status');
   input.after(status);
   const announce = () => {
-    status.textContent = learningStore.available ? '草稿保存在当前浏览器，未提交不计完成。' : '浏览器禁止存储：可正常提交，但关闭或刷新会丢失草稿。';
+    status.textContent = store.available ? '草稿保存在当前浏览器，未提交不计完成。' : '浏览器禁止存储：可正常提交，但关闭或刷新会丢失草稿。';
   };
-  input.addEventListener('input', () => { learningStore.set(key, input.value); announce(); });
+  input.addEventListener('input', () => { store.set(key, input.value); announce(); });
   announce();
-  return {clear(savedValue) { if (savedValue === undefined || input.value === savedValue) learningStore.remove(key); }};
+  return {clear(savedValue) { if (savedValue === undefined || input.value === savedValue) store.remove(key); }};
 };
 
 // Overlapping actions on the same object must not unlock one another's controls.
@@ -109,10 +118,12 @@ window.savedRequest = async function(storageKey, path, values, method='POST') {
     const data = await requestJSON(path, {method:pending.method || method,
       headers:{'Content-Type':'application/json','X-Requested-With':'learning-practice','Idempotency-Key':pending.key},
       body:JSON.stringify(pending.values)});
-    learningStore.remove(storageKey);
+    if (learningStore.get(storageKey)?.key === pending.key) learningStore.remove(storageKey);
     return data;
   } catch (error) {
-    if (error.definitelyRejected) learningStore.remove(storageKey);
+    if (error.definitelyRejected) {
+      if (learningStore.get(storageKey)?.key === pending.key) learningStore.remove(storageKey);
+    }
     else error.pending = pending;
     throw error;
   }

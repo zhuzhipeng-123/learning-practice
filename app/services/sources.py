@@ -63,20 +63,6 @@ def register_source(
     return source_id
 
 
-def set_source_enabled(
-    connection: sqlite3.Connection,
-    source_id: str,
-    enabled: bool,
-) -> None:
-    changed = connection.execute(
-        "UPDATE source SET enabled=? WHERE id=?",
-        (int(enabled), source_id),
-    ).rowcount
-    connection.commit()
-    if changed != 1:
-        raise SourceRegistrationError("source was not found")
-
-
 def _valid_feishu_document_url(url: str) -> bool:
     try:
         parsed = urlsplit(url)

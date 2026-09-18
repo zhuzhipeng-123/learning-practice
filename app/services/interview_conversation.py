@@ -52,6 +52,24 @@ def bounded_dialogue(turns):
                      'limitations': '较早对话可能只保留片段；未出现的细节不能判定为未回答。完整对话仍保存在本地。'}
 
 
+def selected_dialogue(turns, turn_id):
+    """Keep the selected question and its first answer, even early in a long interview."""
+    selected = next((i for i, turn in enumerate(turns) if turn.get('id') == turn_id), None)
+    priority = {selected} if selected is not None else set()
+    if selected is not None and selected + 1 < len(turns) and turns[selected + 1]['role'] == 'user':
+        priority.add(selected + 1)
+    indices = sorted(priority | set(range(max(0, len(turns) - 12), len(turns))))
+    compact = []
+    for index in indices:
+        turn = turns[index]
+        limit = 30000 if index in priority else 1000
+        compact.append({**turn, 'content': turn['content'][:limit],
+                        **({'excerpt': True} if len(turn['content']) > limit else {})})
+    return compact, {'total_turns': len(turns), 'omitted_turns': len(turns) - len(compact),
+                     'excerpted_turns': sum(bool(t.get('excerpt')) for t in compact),
+                     'limitations': '保留所选问题和对应回答，其他对话可能省略或截取；未显示的细节不能当作未回答。完整对话保存在本地。'}
+
+
 def learning_context(connection):
     weak = connection.execute(
         "SELECT t.question_id,substr(v.prompt,1,400) AS question,a.id AS evidence_id,"

@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 {% block title %}自由练习 · 学习练习{% endblock %}
 {% block content %}
-<div class="page-heading"><div><h2>想练什么，就练什么</h2><p class="muted">代码与八股各自出题，打开或刷新本页不会恢复旧题。新一批成功后替换这一栏的旧待办，跨天不累积；要留着复习的题放进复习库。</p></div><nav class="free-jump" aria-label="选择练习区域"><a href="#free-code">代码练习 ↓</a><a href="#free-theory">八股练习 ↓</a></nav></div>
-{% include "heatmap_panel.html" %}
+<div class="page-heading"><div><h2>想练什么，就练什么</h2><p class="muted">首次进入先选择并确认题单；确认后当天固定，关闭再打开仍是同一批题。次日随机本地原题自动更新；按描述选题或生成变种题需手动开始。代码与八股各自保存。</p></div><nav class="free-jump" aria-label="选择练习区域"><a href="#free-code">代码练习 ↓</a><a href="#free-theory">八股练习 ↓</a></nav></div>
+<details class="free-footprint"><summary>近半年学习足迹 · {{ heatmap.active_days }} 天有练习，共 {{ heatmap.activities }} 次主任务练习</summary>{% include "heatmap_panel.html" %}</details>
 {% for kind, label in [('code','代码'),('theory','八股')] %}
 <section class="panel free-panel" id="free-{{ kind }}" data-kind="{{ kind }}" data-original-limit="{{ original_limit }}" data-variant-limit="{{ variant_limit }}">
 <div class="section-heading"><h3>{{ label }}练习</h3><span class="tag">独立设置 · 独立题单</span></div>
+<p class="batch-promise"><span class="batch-promise-label">{{ '今天接着练' if free_state[kind].batch else '先确认今天的题单' }}</span><small>{{ '题单保存在本机，修改下次设置不会换掉当前题目。' if free_state[kind].batch else '选好范围和数量，点击确认出题后，当天关闭再打开仍是同一批。' }}</small></p>
+<details class="batch-settings" {{ '' if free_state[kind].batch else 'open' }}><summary>出题设置 / 主动换一批</summary>
 <form class="free-form" data-kind="{{ kind }}">
 <div class="free-options">
 <label>题目来源<select class="free-source" name="question_source"><option value="original">从题库抽新原题</option><option value="variant">基于原题生成变种题</option></select></label>
@@ -13,14 +15,15 @@
 <label>这次练几道{{ label }}题？<input class="free-count" name="count" type="number" min="1" max="{{ original_limit }}" value="{{ 1 if kind == 'code' else 3 }}" required></label>
 </div>
 <label class="free-theme-label" hidden>想练哪些{{ label }}内容？<textarea id="free-theme-{{ kind }}" class="free-theme" name="theme" rows="3" maxlength="2000" placeholder="{{ '例如：链表反转、双指针，重点练边界条件' if kind == 'code' else '例如：Agent 工具调用、RAG 检索评估，练面试解释' }}"></textarea><small class="muted">只用于这一栏，另一类练习有自己的描述。</small></label>
-<p class="free-generation-hint muted" hidden>变种题每批最多 {{ variant_limit }} 道，保留原题来源。生成时可以先练另一栏；刷新不会自动显示旧结果。</p>
+<p class="free-generation-hint muted" hidden>变种题每批最多 {{ variant_limit }} 道，保留原题来源。生成时可以先练另一栏；离开后回来会继续显示进度与结果。</p>
 <p class="free-choice-status muted" role="status"></p>
-<button class="primary free-submit" type="submit">随机抽{{ label }}题</button>
-</form>
+<button class="primary free-submit" type="submit">确认并随机抽{{ label }}题</button>
+</form></details>
 <div class="free-operation"><p class="free-status" role="status">选择范围并点击出题，本次题目会显示在这里。</p><div class="free-recovery"></div></div>
 <div class="free-current" hidden><h4>本次{{ label }}题</h4><div class="free-result"></div></div>
 </section>
 {% endfor %}
 <details class="panel"><summary>题库来源与同步状态</summary><p class="muted">抽原题只选从未提交过的新题，避开待办。想巩固旧题，可去<a href="/review">复习库</a>。本页使用本地题库；飞书改动后，去<a href="/sources">题库与来源 → 对齐题库</a>更新。</p>{% for source in sources %}<p class="muted">{{ '八股' if source.question_type == 'theory' else '代码' }} · 上次完整同步：{{ source.last_complete_sync_at or '尚未完成' }}{% if source.last_error %} · 有内容待核验{% endif %}</p>{% endfor %}</details>
+<script id="free-state" type="application/json">{{ free_state | tojson }}</script>
 <script src="{{ asset_url('free_practice.js') }}"></script>
 {% endblock %}

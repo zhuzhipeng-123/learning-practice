@@ -92,10 +92,13 @@ def _parse_code_section(
     section = _until_heading(blocks, start)
     images = [block for block in section if block.get("block_type") == 27]
     references = [
-        block for block in section[1:] if block_text(block) or block.get("block_type") == 14
+        block for block in section[1:] if block_text(block) or block.get("block_type") == 14 or "sheet" in block
     ]
     if not images and not references:
         return None, set()
+    issues = [str(block.get('block_id')) for block in section[1:]
+              if block not in references and block not in images
+              and block.get('block_type') not in {1, 2, 19, 22, 24, 25, 34}]
     title = block_text(section[0])
     prompt = (_image_alt(images[0]) if images else "") or title
     prompt_ids = (str(section[0]["block_id"]), *([str(images[0]["block_id"])] if images else []))
@@ -111,7 +114,8 @@ def _parse_code_section(
         category_path=_category_path(paths),
         prompt=prompt,
         reference_text="\n".join(filter(None, (block_text(block) for block in references))),
-        material_status="media_required" if images else "candidate_requires_user_confirmation",
+        material_status="incomplete_reference" if issues else "media_required" if images else "candidate_requires_user_confirmation",
+        parse_issues=tuple(issues),
     )
     used = {str(block["block_id"]) for block in section}
     return draft, used

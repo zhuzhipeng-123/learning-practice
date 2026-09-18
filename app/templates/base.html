@@ -13,7 +13,7 @@
   <header>
     <h1>学习练习</h1>
     <nav aria-label="主要导航">
-      {% for path,label in [('/', '今天'),('/free-practice','自由练习'),('/review','复习库'),('/interview','秋招'),('/sources','题库与来源'),('/settings','模型设置')] %}
+      {% for path,label in [('/', '今天'),('/free-practice','自由练习'),('/review','复习库'),('/interview','秋招'),('/sources','题库与来源'),('/settings','设置与备份')] %}
       <a href="{{ path }}" {{ 'aria-current=page' if request.url.path == path else '' }}>{{ label }}</a>
       {% endfor %}
     </nav>

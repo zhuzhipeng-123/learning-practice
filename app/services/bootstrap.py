@@ -1,12 +1,11 @@
 import json
 import sqlite3
-from pathlib import Path
 
-from app.parsers.p0_samples import load_reviewed_samples
+from app.config import initial_sources_path
 
 
 def load_initial_sources():
-    path = Path(__file__).resolve().parents[2] / 'local-config.sources.json'
+    path = initial_sources_path()
     if not path.exists():
         return []
     sources = json.loads(path.read_text(encoding='utf-8'))['sources']
@@ -24,8 +23,3 @@ def register_initial_sources(connection: sqlite3.Connection) -> None:
         load_initial_sources(),
     )
     connection.commit()
-
-
-def reviewed_drafts_for(source_id: str):
-    drafts, _ = load_reviewed_samples()
-    return [draft for draft in drafts if draft.source_id == source_id]

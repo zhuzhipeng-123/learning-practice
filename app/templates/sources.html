@@ -37,7 +37,8 @@
     <p>尚未登记来源。</p>
   {% endif %}
 </details></details>
-<details class="panel"><summary>待整理内容 · {{ candidates|length }} 条</summary>
+<details class="panel" id="pending-candidates" {{ 'open' if candidate_page else '' }}><summary>待整理内容 · 共 {{ candidate_total }} 条</summary>
+  <p class="muted">本页 {{ candidates|length }} 条。确认或忽略后，下一页会继续从本页末尾的位置读取。</p>
   <p class="muted">明确题干与参考边界可自动入库；复合题、纯笔记和身份变化留待确认。Agnes 可提供边界建议，建议不会直接改写原文或自动发布。</p>
   {% if candidates %}
     {% for candidate in candidates %}
@@ -60,7 +61,12 @@
         <p data-candidate-result="{{ candidate.id }}" role="status" hidden></p>
       </details>
     {% endfor %}
-  {% else %}<p>没有待确认候选。</p>{% endif %}
+  {% else %}<p>{{ '本页内容已处理，请返回第一批查看其余候选。' if candidate_total else '没有待确认候选。' }}</p>{% endif %}
+  {% if previous_url or next_url or candidate_page %}<nav aria-label="待整理内容分页">
+    {% if previous_url %}<a href="{{ previous_url }}">← 上一页</a>{% endif %}
+    {% if next_url %}<a href="{{ next_url }}">下一页 →</a>{% endif %}
+    {% if candidate_page %}<a href="/sources#pending-candidates">返回第一批</a>{% endif %}
+  </nav>{% endif %}
 </details>
 <script>
 document.querySelector("#add-source").addEventListener("click", async () => {

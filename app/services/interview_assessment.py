@@ -1,12 +1,12 @@
 """Record the user's code self-assessment without treating chat as an independent pass."""
 
 from datetime import UTC, datetime
-from zoneinfo import ZoneInfo
 
 from app.domain import Submission
 from app.services.interview import InterviewError
+from app.services.learning_clock import local_date
 from app.services.practice import _complete_attempt
-from app.services.review import enter_review
+from app.services.review import enter_code_review
 from app.services.tasks import _load_idempotent, _save_idempotent
 from app.storage.ids import new_id
 from app.storage.transactions import atomic
@@ -37,9 +37,12 @@ def assess_code(connection, session_id, result, note, request_key):
         connection.execute('INSERT INTO attempt(id,task_id,question_version_id,entry_mode,started_at) VALUES (?,?,?,?,?)',
                            (attempt_id, session['task_id'], session['question_version_id'], 'interview', now.isoformat()))
     _complete_attempt(connection, attempt_id, Submission(session['task_id'], request_key, now, 'interview', code_self_result=result, note=note),
-                      now, now.astimezone(ZoneInfo('Asia/Shanghai')).date().isoformat())
+                      now, local_date(now).isoformat())
+    round_id = None
     if result == 'cannot_solve':
-        enter_review(connection, session['question_id'], session['review_basis_id'], 'interview_code_cannot_solve', now)
-    response = {'attempt_id': attempt_id, 'result': result, 'counted_as_review_pass': False}
+        round_id = enter_code_review(connection, session['question_id'], session['review_basis_id'], 'interview_code_cannot_solve', now)
+        connection.execute('UPDATE attempt SET review_round_id=? WHERE id=?', (round_id, attempt_id))
+    response = {'attempt_id': attempt_id, 'result': result, 'counted_as_review_pass': False,
+                'review_basis_conflict': result == 'cannot_solve' and round_id is None}
     _save_idempotent(connection, request_key, 'interview_assessment', payload, response, now.isoformat())
     return response

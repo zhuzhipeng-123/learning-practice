@@ -2,9 +2,9 @@
 
 import json
 from datetime import UTC, date, datetime
-from zoneinfo import ZoneInfo
 
 from app.services.interview import add_turn
+from app.services.learning_clock import local_date, utc_bounds_for_local_days
 from app.services.llm_config import client_for_config, freeze_request
 from app.services.model_jobs import ModelJobError, _claim_job, fail_job
 from app.services.model_json import complete_json, parse_model_json
@@ -57,13 +57,15 @@ def unanswered_questions(turns):
 
 def reflection_context(connection, day):
     timeline = activity_timeline(connection, day)
+    start_at, end_at = utc_bounds_for_local_days(day, day)
     turns = [dict(row) for row in connection.execute(
         "SELECT it.id,it.session_id,it.role,it.content,v.prompt AS main_question,t.question_id,"
         "EXISTS(SELECT 1 FROM model_job j WHERE j.result_id=it.id AND j.purpose='interview_feedback') AS is_feedback "
         "FROM interview_turn it JOIN interview_session s ON s.id=it.session_id "
         "JOIN task t ON t.id=s.task_id JOIN question_version v ON v.id=s.question_version_id "
-        "WHERE date(it.created_at,'+8 hours')=? AND NOT EXISTS "
-        "(SELECT 1 FROM model_job j WHERE j.result_id=it.id AND j.purpose='interview_feedback') ORDER BY it.rowid", (day.isoformat(),))]
+        "WHERE julianday(it.created_at)>=julianday(?) AND julianday(it.created_at)<julianday(?) "
+        "AND NOT EXISTS (SELECT 1 FROM model_job j WHERE j.result_id=it.id "
+        "AND j.purpose='interview_feedback') ORDER BY it.rowid", (start_at, end_at))]
     evaluations = [dict(row) for row in connection.execute("SELECT e.id,e.attempt_id,e.verdict,e.raw_json FROM evaluation e "
                                                           "JOIN attempt a ON a.id=e.attempt_id WHERE a.activity_date=? "
                                                           "AND e.adopted=1 ORDER BY e.rowid", (day.isoformat(),))]
@@ -217,7 +219,7 @@ def _save_result(connection, module, context, text):
     turn_id = new_id("turn")
     connection.execute("INSERT INTO interview_turn VALUES (?,?, 'assistant',?,?)",
                        (turn_id, context["session_id"], text, now.isoformat()))
-    mark_model_reflections_stale(connection, now.astimezone(ZoneInfo("Asia/Shanghai")).date())
+    mark_model_reflections_stale(connection, local_date(now))
     return turn_id
 
 

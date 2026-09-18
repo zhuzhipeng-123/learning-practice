@@ -2,16 +2,20 @@ import hashlib
 import json
 import sqlite3
 from datetime import UTC, datetime
-from zoneinfo import ZoneInfo
 
 from app.domain import Submission
+from app.services.learning_clock import local_date
 from app.services.reflections import mark_model_reflections_stale
-from app.services.review import enter_review, exposed_recently, get_active_round, record_valid_pass
+from app.services.review import (
+    enter_code_review,
+    enter_review,
+    exposed_recently,
+    get_active_round,
+    record_valid_pass,
+)
 from app.services.tasks import IdempotencyConflictError
 from app.storage.ids import new_id
 from app.storage.transactions import atomic, transaction
-
-SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 class PracticeError(RuntimeError):
@@ -98,18 +102,21 @@ def submit_code(connection: sqlite3.Connection, submission: Submission) -> dict[
     if kind != "code":
         raise PracticeError("task requires a theory answer")
     submitted_utc = submission.submitted_at.astimezone(UTC)
-    activity_date = submission.submitted_at.astimezone(SHANGHAI).date().isoformat()
+    activity_date = local_date(submission.submitted_at).isoformat()
     with transaction(connection):
         _complete_attempt(connection, attempt["id"], submission, submitted_utc, activity_date)
         round_id = attempt["review_round_id"]
+        review_basis_conflict = False
         if submission.code_self_result == "cannot_solve":
-            round_id = enter_review(
+            entered_round = enter_code_review(
                 connection,
                 task["question_id"],
                 task["review_basis_id"],
                 "code_cannot_solve",
                 submitted_utc,
             )
+            review_basis_conflict = entered_round is None
+            round_id = entered_round or round_id
             connection.execute(
                 "UPDATE attempt SET review_round_id=? WHERE id=?",
                 (round_id, attempt["id"]),
@@ -127,6 +134,7 @@ def submit_code(connection: sqlite3.Connection, submission: Submission) -> dict[
             "task_completed": True,
             "passed": passed,
             "review_round_id": round_id,
+            "review_basis_conflict": review_basis_conflict,
         }
         _save_submission_result(connection, submission.request_key, payload, result, submitted_utc)
     return result
@@ -148,7 +156,7 @@ def submit_theory(connection: sqlite3.Connection, submission: Submission) -> dic
     if kind != "theory":
         raise PracticeError("task requires a code self assessment")
     submitted_utc = submission.submitted_at.astimezone(UTC)
-    activity_date = submission.submitted_at.astimezone(SHANGHAI).date().isoformat()
+    activity_date = local_date(submission.submitted_at).isoformat()
     job_id = new_id("job")
     with transaction(connection):
         _complete_attempt(connection, attempt["id"], submission, submitted_utc, activity_date)
@@ -224,6 +232,22 @@ def adopt_theory_evaluation(
     return evaluation_id
 
 
+@atomic
+def correct_theory_evaluation(connection, attempt_id, verdict, request_key, expected_adoption):
+    from app.services.tasks import _load_idempotent, _save_idempotent
+    payload = {'attempt_id': attempt_id, 'verdict': verdict, 'expected_adoption': expected_adoption}
+    saved = _load_idempotent(connection, request_key, 'manual_evaluation', payload)
+    if saved:
+        return saved
+    current = connection.execute('SELECT id FROM evaluation WHERE attempt_id=? AND adopted=1', (attempt_id,)).fetchone()
+    if expected_adoption != (current[0] if current else None):
+        raise IdempotencyConflictError('评价已更新，请重新读取当前评价后再修改')
+    now = datetime.now(UTC)
+    result = {'evaluation_id': adopt_theory_evaluation(connection, attempt_id, verdict, now, corrected_by_user=True)}
+    _save_idempotent(connection, request_key, 'manual_evaluation', payload, result, now.isoformat())
+    return result
+
+
 def add_theory_to_review(
     connection: sqlite3.Connection,
     question_id: str,
@@ -258,7 +282,7 @@ def _complete_attempt(
     submitted_at: datetime,
     activity_date: str,
 ) -> None:
-    mark_model_reflections_stale(connection, submission.submitted_at.astimezone(SHANGHAI).date())
+    mark_model_reflections_stale(connection, local_date(submission.submitted_at))
     connection.execute(
         "UPDATE attempt SET submitted_at=?, activity_date=?, answer_text=?, "
         "code_self_result=?, note=?, answer_exposed_at=COALESCE(answer_exposed_at, ?) "

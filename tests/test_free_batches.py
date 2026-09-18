@@ -107,7 +107,7 @@ def test_batch_survives_same_day_response_loss_but_expires_after_midnight(databa
     assert database.execute('SELECT plan_id FROM free_practice_batch WHERE id=?', (new['id'],)).fetchone()[0] != old_plan
 
 
-def test_latest_batch_is_readable_but_not_restored_by_fresh_entry(monkeypatch, manual_batches):
+def test_latest_batch_is_restored_by_fresh_entry_without_model_calls(monkeypatch, manual_batches):
     monkeypatch.setattr('app.services.bootstrap.load_initial_sources', list)
     monkeypatch.setattr('app.services.module_jobs.client_for_config', lambda _: SimpleNamespace(complete=fake_client))
     with TestClient(app) as client:
@@ -124,7 +124,8 @@ def test_latest_batch_is_readable_but_not_restored_by_fresh_entry(monkeypatch, m
         task = state['result_batch']['result']['tasks'][0]
         page = client.get('/free-practice')
         assert f'/practice/{task["id"]}' not in page.text
-        assert 'New independent variant' not in page.text
+        assert 'New independent variant' in page.text
+        assert task['id'] in page.text
         assert 'New independent variant' in client.get('/api/free-practice/batches/' + batch['id']).text
         assert 'free-theme-code' in page.text and 'free-theme-theory' in page.text
         assert 'reference_text' not in json.dumps(state)

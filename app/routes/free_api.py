@@ -17,6 +17,12 @@ def create_batch(body: FreePracticeRequest, database: Database,
         raise HTTPException(422, str(error)) from error
 
 
+@router.post('/restore')
+def restore(database: Database):
+    from app.services.free_batches import restore_free
+    return restore_free(database)
+
+
 @router.get('/state')
 def read_state(database: Database):
     return practice_state(database)

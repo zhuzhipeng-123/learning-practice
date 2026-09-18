@@ -74,6 +74,8 @@ def add_free_practice(
     candidates = find_new_originals(connection, '' if selected_ids is not None else theme, True, question_type)
     if selected_ids is not None:
         candidates = [row for row in candidates if row['id'] in selected_ids]
+        from app.services.practice_selection import validate_selection_sources
+        validate_selection_sources(connection, request_key, candidates)
     generator = random.Random(random_seed)
     selected = generator.sample(candidates, min(count, len(candidates)))
     task_result = add_tasks(

@@ -92,7 +92,7 @@ def test_new_daily_api_progress_and_stale_page_are_current_batch_only(monkeypatc
         stale = client.put(path, headers={**headers, 'Idempotency-Key': 'stale'}, json={**body, 'expected_batch': 'first'})
         assert stale.status_code == 409 and '其他页面更新' in stale.text
         assert client.post('/api/plans', headers=headers, json=body).json() == first
-        assert all(t not in client.get('/').text for t in second['task_ids'])
+        assert all(t in client.get('/').text for t in second['task_ids'])
         html = client.get('/?batch=second').text
         assert all(t in html for t in second['task_ids'])
         assert all(t not in html for t in first['task_ids'])

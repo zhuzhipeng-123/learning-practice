@@ -25,8 +25,8 @@ function bindPanel(panel) {
   const find = selector => panel.querySelector(selector), kind = panel.dataset.kind, label = kind === 'code' ? '代码' : '八股';
   const form = find('form'), source = find('.free-source'), mode = find('.free-mode'), theme = find('.free-theme'), count = find('.free-count');
   const submit = find('.free-submit'), output = find('.free-status'), recovery = find('.free-recovery'), choice = find('.free-choice-status');
-  const requestKey = `learning-free-batch-${kind}`, preferencesKey = `learning-free-preferences-${kind}`;
-  let state = {batch:null, result_batch:null}, activated = false, sending = false, timer = null, refreshing = false, revision = 0;
+  const requestKey = `learning-free-confirmed-batch-${kind}`, preferencesKey = `learning-free-preferences-${kind}`;
+  let state = JSON.parse(document.querySelector('#free-state').textContent)[kind], activated = true, sending = false, timer = null, refreshing = false, revision = 0;
   const values = () => ({question_source:source.value, mode:mode.value, theme:theme.value,
     count:Number(count.value), only_new:source.value === 'original', question_type:kind});
   const preferences = learningStore.get(preferencesKey);
@@ -42,7 +42,7 @@ function bindPanel(panel) {
     find('.free-generation-hint').hidden = !variant;
     count.max = variant ? panel.dataset.variantLimit : panel.dataset.originalLimit;
     if (Number(count.value) > Number(count.max)) count.value = count.max;
-    submit.textContent = active(state.batch) ? '这一批正在准备中…' : `${variant ? '生成' : mode.value === 'random' ? '随机抽' : '按描述抽'}${label}${variant ? '变种题' : '题'}`;
+    submit.textContent = active(state.batch) ? '这一批正在准备中…' : `确认并${variant ? '生成' : mode.value === 'random' ? '随机抽' : '按描述抽'}${label}${variant ? '变种题' : '题'}`;
     submit.disabled = sending || active(state.batch) || Boolean(learningStore.get(requestKey));
     if (edited) {
       learningStore.set(preferencesKey, values());
@@ -55,24 +55,32 @@ function bindPanel(panel) {
   }
   function render() {
     const batch = state.batch;
+    find('.batch-promise-label').textContent = batch ? '今天接着练' : '先确认今天的题单';
+    find('.batch-promise small').textContent = batch
+      ? '题单保存在本机，修改下次设置不会换掉当前题目。'
+      : '选好范围和数量，点击确认出题后，当天关闭再打开仍是同一批。';
     recovery.replaceChildren();
     if (active(batch)) {
       const description = batch.spec.mode === 'topic' ? `，范围：${batch.spec.theme}` : '，随机范围';
       output.textContent = `正在后台准备 ${batch.spec.count} 道${label}${batch.spec.question_source === 'variant' ? '变种题' : '题'}${description}。请在本页查看结果，可以先练另一栏。`;
+      if (batch.selection_progress) output.textContent += ` 已筛选 ${batch.selection_progress.completed} / ${batch.selection_progress.total} 批候选题。`;
     } else if (batch?.status === 'complete') {
       const method = batch.spec.question_source === 'variant' ? '模型生成并核对' : batch.spec.mode === 'topic' ? '模型筛选范围后从本地题库抽取' : '直接从本地题库随机抽取，未调用模型';
       output.textContent = `本次已准备 ${batch.result.added} 道${label}题 · ${method}。${batch.result.missing ? `还缺 ${batch.result.missing} 道，可调整范围或更新题库。` : ''}`;
+      if (batch.result.warnings?.length) output.textContent += ' ' + batch.result.warnings.join(' ');
     } else if (batch) {
-      output.textContent = `这批未完成：${batch.error} 已有题目仍可练习。`;
+      output.textContent = `这批未完成：${batch.error}${state.result_batch ? ' 已确认的题目仍可练习。' : ' 可以重试，或修改设置后重新确认出题。'}`;
       if (!learningStore.get(requestKey)) showButton('按这批原设置重试', () => send(`/api/free-practice/batches/${batch.id}/retry`, {}, true));
     }
     find('.free-current').hidden = !state.result_batch;
     if (state.result_batch) {
       find('.free-current').hidden = false;
-      const remaining = state.result_batch.result.tasks.filter(task => ['pending','in_progress'].includes(task.status));
+      const remaining = state.result_batch.result.tasks.filter(task => task.status !== 'cancelled');
+      const completed = remaining.filter(task => task.status === 'completed').length;
+      find('.free-current h4').textContent = `今天的${label}题 · ${completed} / ${remaining.length} 已完成`;
       cards(find('.free-result'), remaining);
       if (!remaining.length) find('.free-result').textContent = state.result_batch.result.added ? '这批练习已处理完，可以再抽一批；需巩固的题请加入复习库。' : '本次没有可用的新题，旧待办已作废。请调整范围或更新题库后再试。';
-    } else { find('.free-result').replaceChildren(); if (!batch) output.textContent = '本次还没有出题，选择范围并点击后开始。'; }
+    } else { find('.free-result').replaceChildren(); if (!batch) output.textContent = '今天还没有确认题单，选择范围并确认出题后开始。'; }
     const pending = learningStore.get(requestKey);
     if (pending) {
       output.textContent = '上次提交的响应还未确认，已有题目保留。请恢复上次提交，不会重复创建。';
@@ -81,14 +89,13 @@ function bindPanel(panel) {
     updateChoice();
   }
   async function refresh() {
-    if (!activated || !state.batch || refreshing || sending || document.hidden) return;
+    if (!activated || refreshing || sending || document.hidden) return;
     refreshing = true;
     const startedRevision = revision;
     try {
-      const batch = await requestJSON(`/api/free-practice/batches/${state.batch.id}`, {cache:'no-store'});
+      const current = (await requestJSON('/api/free-practice/state', {cache:'no-store'}))[kind];
       if (startedRevision === revision && !sending) {
-        state.batch = batch;
-        if (batch.status === 'complete') state.result_batch = batch;
+        state = current;
         render();
       }
     } catch (error) {
@@ -134,6 +141,10 @@ function bindPanel(panel) {
   window.addEventListener('focus', () => refresh());
   panel.addEventListener('learning-task-cancelled', () => refresh());
   render(); schedule();
+  window.addEventListener('learning-free-restored', refresh);
 }
+requestJSON('/api/free-practice/restore', {method:'POST', headers:{'X-Requested-With':'learning-practice'}})
+  .then(() => window.dispatchEvent(new Event('learning-free-restored')))
+  .catch(error => { for (const node of document.querySelectorAll('.free-status')) node.textContent = `今日题单恢复未确认：${error.message}。刷新可安全重试。`; });
 for (const panel of document.querySelectorAll('.free-panel')) bindPanel(panel);
 })();

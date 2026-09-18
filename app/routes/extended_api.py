@@ -212,6 +212,8 @@ def review_preview(session_id: str, body: ReviewPreviewRequest, database: Databa
     from app.services.interview_review import preview_review
     try:
         return preview_review(database, session_id, body.turn_id, idempotency_key)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
     except ModelJobError as error:
         return model_error_response(error, 502)
 

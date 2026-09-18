@@ -1,7 +1,7 @@
 import sqlite3
 from datetime import UTC, datetime
-from zoneinfo import ZoneInfo
 
+from app.services.learning_clock import local_date
 from app.services.practice import add_theory_to_review
 from app.services.reflections import mark_model_reflections_stale
 from app.services.tasks import _load_idempotent, _save_idempotent
@@ -73,7 +73,7 @@ def add_turn(
             "INSERT INTO interview_turn VALUES (?, ?, ?, ?, ?)",
             (turn_id, session_id, role, content, created_at.astimezone(UTC).isoformat()),
         )
-        mark_model_reflections_stale(connection, created_at.astimezone(ZoneInfo("Asia/Shanghai")).date())
+        mark_model_reflections_stale(connection, local_date(created_at))
         if role == "user":
             connection.execute(
                 "UPDATE task SET status='completed', completed_at=COALESCE(completed_at, ?) "

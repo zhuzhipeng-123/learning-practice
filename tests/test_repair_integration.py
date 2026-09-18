@@ -48,7 +48,7 @@ def test_completed_answer_and_correction_across_requests(monkeypatch):
         assert page.status_code == 200 and 'id="show-saved"' in page.text
         assert "saved answer" not in page.text and "theory reference" not in page.text
         assert client.post(path + "/attempts", headers=HEADERS, json={"entry_mode": "web", "started_at": now}).status_code == 409
-        correction = client.post(f"/api/attempts/{attempt}/evaluation", headers=HEADERS, json={"verdict": "needs_review"})
+        correction = client.post(f"/api/attempts/{attempt}/evaluation", headers={**HEADERS, "Idempotency-Key": "manual-correction"}, json={"verdict": "needs_review", "expected_adoption": None})
         assert correction.status_code == 200
         saved = client.post(path + "/saved-answer", headers=HEADERS).json()
         assert saved["answer_text"] == "saved answer"

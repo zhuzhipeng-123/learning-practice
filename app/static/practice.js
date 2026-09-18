@@ -103,8 +103,17 @@ function action(selector, operation) {
   button?.addEventListener("click", async () => {
     const controls = ['#run-evaluation','#reevaluate'].includes(selector) ? document.querySelectorAll('#run-evaluation,#reevaluate') : [button];
     const unlock = lockControls(controls);
-    try { await operation(button); } catch (error) { show(error.message); }
-    finally { unlock(); }
+    try { await operation(button); } catch (error) {
+      show(error.message);
+      if (selector === '#correct-evaluation') {
+        if (error.pending) show('这次评价的结果尚未确认。点击“重试上次评价”恢复原提交，当前选择暂不生效。');
+        if (error.status === 409) await refreshEvaluationState();
+      }
+    }
+    finally {
+      if (selector === '#correct-evaluation') button.textContent = learningStore.get(`learning-evaluation-${button.dataset.attemptId}`) ? '重试上次评价' : '采用我的评价';
+      unlock();
+    }
   });
 }
 
@@ -193,9 +202,14 @@ action("#show-saved", async () => {
   show([data.answer_text, data.code_self_result === 'can_solve' ? '自评：会做' : data.code_self_result ? '自评：不会做' : '', data.note,
     ...data.evaluations.map(evaluationText)].filter(Boolean).join('\n\n'));
 });
+const correctionButton = document.querySelector('#correct-evaluation');
+if (correctionButton && learningStore.get(`learning-evaluation-${correctionButton.dataset.attemptId}`)) correctionButton.textContent = '重试上次评价';
 action("#correct-evaluation", async button => {
-  await request(`/api/attempts/${button.dataset.attemptId}/evaluation`, {
-    verdict: document.querySelector("#manual-verdict").value
+  const key = `learning-evaluation-${button.dataset.attemptId}`;
+  const pending = learningStore.get(key);
+  await savedRequest(key, `/api/attempts/${button.dataset.attemptId}/evaluation`, pending?.values || {
+    verdict: document.querySelector("#manual-verdict").value,
+    expected_adoption: button.dataset.adoptionId || null
   });
   show('已采用你的评价，复习进度已重新计算。');
   await refreshEvaluationState();
@@ -212,6 +226,8 @@ async function refreshEvaluationState() {
       const current = document.getElementById(id), updated = html.getElementById(id);
       if (current) { current.textContent = updated?.textContent || ''; current.hidden = !updated; }
     }
+    const correction = document.querySelector('#correct-evaluation');
+    if (correction) correction.dataset.adoptionId = html.querySelector('#correct-evaluation')?.dataset.adoptionId || '';
     const retry = document.querySelector('#run-evaluation');
     if (retry) retry.hidden = !html.querySelector('#run-evaluation');
   } catch {

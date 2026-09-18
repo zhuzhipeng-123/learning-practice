@@ -6,16 +6,18 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from threading import Lock
 
+from app.services.model_batches import prepare_batches, prepare_format_retry
 from app.services.model_jobs import ModelJobError
 from app.services.model_json import parse_model_json
 from app.services.module_jobs import run_module_job
-from app.services.source_coverage import parsing_context, validate_suggestions
+from app.services.source_coverage import parsing_batches, validate_suggestions
 from app.storage.database import connect_database
 from app.storage.transactions import transaction
 
 _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="source-refresh")
 _lock = Lock()
 _jobs = {}
+REFRESH_COOLDOWN = timedelta(minutes=10)
 
 
 def source_status(connection):
@@ -57,7 +59,7 @@ def queue_source_refresh(connection, source_id=None, force=False, change_note=''
             if existing and not existing.done():
                 queued.append(source["id"])
                 continue
-            if not force and checked and now - checked < timedelta(minutes=10):
+            if not force and checked and now - checked < REFRESH_COOLDOWN:
                 continue
             _jobs[key] = _pool.submit(_refresh, *key, change_note) if change_note else _pool.submit(_refresh, *key)
             queued.append(source["id"])
@@ -81,18 +83,28 @@ def analyze_alignment(connection, source_id, result, client=None):
     analysis = {'status': 'running' if count else 'not_needed', 'total': count, 'processed': 0, 'suggestions': [], 'errors': []}
     result['analysis'] = analysis
     _save_summary(connection, result)
-    for offset in range(0, count, 4):
+    try:
+        payload = {'source_id': source_id, 'change_note': result.get('change_note', '')}
+        batches = prepare_batches(connection, 'source_parsing', result['run_id'], payload,
+                                  lambda: parsing_batches(connection, source_id, payload['change_note']))
+    except Exception as error:
+        logging.getLogger(__name__).exception('Source analysis plan could not be prepared: %s', source_id)
+        analysis.update(status='partial', errors=[str(error)])
+        _save_summary(connection, result)
+        return analysis
+    contexts = [json.loads(connection.execute('SELECT input_json FROM model_request WHERE job_id=?',
+                                             (batch['job_id'],)).fetchone()[0]) for batch in batches]
+    analysis['total'] = sum(len(context['candidates']) for context in contexts)
+    for batch, context in zip(batches, contexts, strict=True):
         try:
-            context = parsing_context(connection, source_id, 4, offset)
-            context['user_change_description'] = result.get('change_note', '')
-            key = f"{result['run_id']}:{offset}"
             try:
-                reply = run_module_job(connection, 'source_parsing', source_id, key, client, context)
+                reply = run_module_job(connection, 'source_parsing', source_id, batch['key'], client)
             except ModelJobError as error:
                 if not any(marker in str(error) for marker in ('JSON', '边界建议', '遗漏了部分候选')):
                     raise
                 # One bounded format retry; preserve both requests for inspection.
-                reply = run_module_job(connection, 'source_parsing', source_id, key + ':format-retry', client, context)
+                retry = prepare_format_retry(connection, 'source_parsing', batch)
+                reply = run_module_job(connection, 'source_parsing', source_id, retry['key'], client)
             titles = {item['anchor_id']: item['title'] for item in context['candidates']}
             payload = parse_model_json(reply['response_text'])
             validate_suggestions(context, payload)
@@ -106,7 +118,7 @@ def analyze_alignment(connection, source_id, result, client=None):
             break
         finally:
             _save_summary(connection, result)
-    analysis['status'] = 'partial' if analysis['errors'] else 'complete' if count else 'not_needed'
+    analysis['status'] = 'partial' if analysis['errors'] else 'complete' if analysis['total'] else 'not_needed'
     _save_summary(connection, result)
     return analysis
 

@@ -25,7 +25,7 @@ updateSummary();
 const choices = [...quotaInputs, document.querySelector('#code-target'), document.querySelector('#theory-target')];
 const selectionState = () => JSON.stringify(choices.map(input => input.value));
 let originalSelection = selectionState();
-let ready = false;
+let ready = Boolean(generate.dataset.batchKey);
 function showSavedTasks() {
   const changed = selectionState() !== originalSelection;
   document.querySelector('#unapplied-selection').hidden = ready && !changed;
@@ -41,7 +41,7 @@ choices.forEach(input => input.addEventListener('input', () => {
 }));
 async function applyPlan(data, body) {
   generate.dataset.planId = data.plan_id;
-  const html = await requestText(`/?batch=${encodeURIComponent(data.batch_key)}`, {cache:'no-store'});
+  const html = await requestText('/', {cache:'no-store'});
   const documentCopy = new DOMParser().parseFromString(html, 'text/html');
   if (documentCopy.querySelector('#create-plan').dataset.batchKey !== data.batch_key) throw Error('题单已在其他页面更新，请刷新后重新出题。');
   for (const id of ['daily-practice','plan-progress']) {
@@ -50,9 +50,13 @@ async function applyPlan(data, body) {
     document.getElementById(id).replaceWith(region);
   }
   const allocation = JSON.parse(documentCopy.querySelector('#saved-allocation').textContent);
+  if (!body && selectionState() === originalSelection) {
+    for (const input of choices) input.value = input.dataset.path ? allocation[input.dataset.path] || 0 : documentCopy.getElementById(input.id).value;
+    updateSummary();
+  }
   generate.dataset.batchKey = documentCopy.querySelector('#create-plan').dataset.batchKey;
   originalSelection = JSON.stringify(choices.map(input => String(input.dataset.path ? allocation[input.dataset.path] || 0 : documentCopy.getElementById(input.id).value)));
-  ready = true; generate.textContent = '重新出一批题'; showSavedTasks();
+  ready = true; generate.textContent = '替换今天的题单'; showSavedTasks();
   const shortages = Object.entries(data.shortages || {}).map(([kind,n])=>`${kind==='code'?'代码':kind==='unallocated'?'八股总计':kind}缺 ${n} 题`).join('；');
   feedback.textContent = shortages ? `题量已保存。${shortages}。可调整范围或更新题库后再次保存。` : '题量已保存，下面的题单已更新。';
 }
@@ -90,3 +94,20 @@ generate.addEventListener('click', () => {
   } catch(error) { feedback.hidden = false; feedback.textContent = error.message; }
 });
 showSavedTasks();
+
+async function restoreToday() {
+  if (ready || learningStore.get(`learning-plan-${generate.dataset.date}`)) return;
+  const unlock = lockControls([generate]);
+  try {
+    const data = await requestJSON('/api/practice/restore', {method:'POST', headers:{'X-Requested-With':'learning-practice'}});
+    if (data.batch) {
+      await applyPlan(data.batch);
+      feedback.hidden = false;
+      feedback.textContent = '新的一天，已按上次确认的题量安排本地原题。今天的题单会保持不变。';
+    }
+  } catch (error) {
+    feedback.hidden = false; feedback.textContent = error.message;
+    const retry = document.createElement('button'); retry.textContent = '重新读取今日题单'; retry.onclick = restoreToday; feedback.append(retry);
+  } finally { unlock(); }
+}
+restoreToday();

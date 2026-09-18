@@ -6,6 +6,10 @@ from typing import Any
 
 import httpx
 
+from app.config import provider_base_url, provider_default_model
+
+DEFAULT_RETRY_DELAY = timedelta(seconds=60)
+
 
 class AgnesError(RuntimeError):
     """Base error for a failed Agnes request."""
@@ -24,7 +28,7 @@ class AgnesRateLimitError(AgnesError):
 
     def __init__(self, message, retry_at=None):
         super().__init__(message)
-        self.retry_at = retry_at or datetime.now(UTC) + timedelta(seconds=60)
+        self.retry_at = retry_at or datetime.now(UTC) + DEFAULT_RETRY_DELAY
 
 
 def retry_after_deadline(value, now=None):
@@ -38,7 +42,7 @@ def retry_after_deadline(value, now=None):
             return max(now, deadline.astimezone(UTC))
     except (ValueError, TypeError, OverflowError):
         pass
-    return now + timedelta(seconds=60)
+    return now + DEFAULT_RETRY_DELAY
 
 
 class AgnesResponseError(AgnesError):
@@ -55,12 +59,14 @@ class AgnesSettings:
 
     @classmethod
     def from_environment(cls) -> "AgnesSettings":
-        base_url = os.getenv("AGNES_BASE_URL", "https://apihub.agnes-ai.com/v1")
         api_key = os.getenv("AGNES_API_KEY")
-        model = os.getenv("AGNES_MODEL", "agnes-2.5-flash")
         if not api_key:
             raise AgnesConfigurationError("AGNES_API_KEY is not configured")
-        return cls(base_url=base_url.rstrip("/"), api_key=api_key, model=model)
+        return cls(
+            base_url=provider_base_url("agnes"),
+            api_key=api_key,
+            model=provider_default_model("agnes"),
+        )
 
 
 @dataclass(frozen=True)

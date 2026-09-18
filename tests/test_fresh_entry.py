@@ -36,27 +36,36 @@ def saved_work(monkeypatch):
 
 
 @pytest.mark.parametrize('path', ['/', '/free-practice', '/interview'])
-def test_fresh_entry_never_renders_saved_question_lists(saved_work, path):
+def test_entry_restores_only_its_current_day_practice_without_mutation(saved_work, path):
     client, db, daily, free, session, _ = saved_work
     ids = daily['task_ids'] + batch_state(db, free['id'])['result']['task_ids'] + [session]
     before = {table: [tuple(row) for row in db.execute(f'SELECT * FROM {table} ORDER BY rowid')]
               for table in ['task', 'interview_turn', 'review_round', 'valid_review_pass', 'model_job']}
     for _ in range(2):
         html = client.get(path).text
-        assert all(identifier not in html for identifier in ids)
-        assert 'class="task-row"' not in html
+        free_ids = batch_state(db, free['id'])['result']['task_ids']
+        if path == '/':
+            assert session in html
+            assert all(t in html for t in daily['task_ids'] if t != db.execute('SELECT task_id FROM interview_session WHERE id=?', (session,)).fetchone()[0])
+            assert all(t not in html for t in free_ids)
+        elif path == '/free-practice':
+            assert all(t in html for t in free_ids)
+            assert all(t not in html for t in daily['task_ids']) and session not in html
+        else:
+            assert all(identifier not in html for identifier in ids)
+            assert 'class="task-row"' not in html
         assert '最近一批' not in html and '继续最近的面试' not in html
         assert 'href="/history' not in html
     assert before == {table: [tuple(row) for row in db.execute(f'SELECT * FROM {table} ORDER BY rowid')]
                       for table in before}
 
 
-def test_explicit_daily_result_can_render_but_bare_entry_stays_empty(saved_work):
+def test_bare_and_stale_url_restore_latest_same_day_daily_batch(saved_work):
     client, db, daily, _, _, _ = saved_work
     latest = draw_daily_batch(db, local_today(), 1, 0, {}, 'clicked-now', daily['batch_key'])
     assert latest['task_ids'][0] in client.get('/?batch=clicked-now').text
-    assert latest['task_ids'][0] not in client.get('/').text
-    assert latest['task_ids'][0] not in client.get('/?batch=old-daily').text
+    assert latest['task_ids'][0] in client.get('/').text
+    assert latest['task_ids'][0] in client.get('/?batch=old-daily').text
 
 
 def test_history_redirects_to_review_and_collected_records_remain(saved_work):

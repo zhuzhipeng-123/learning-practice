@@ -59,3 +59,13 @@ button,.button-link{min-height:42px;}textarea{max-width:100%;}
 #new-day-notice{max-width:1080px;margin:12px auto;}#free-form select,#interview-choice select{width:100%;}#count{width:88px;}
 @media(max-width:750px){.reflection-columns{grid-template-columns:1fr;gap:12px;}.target-inputs input{width:68px;}.task-row{flex-wrap:wrap;gap:10px;}}
 .free-options{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) minmax(140px,.65fr);gap:20px;align-items:start}.free-options label{min-width:0}.free-options select,.free-options input{width:100%;box-sizing:border-box}.free-panel{scroll-margin-top:22px}.free-panel .free-submit{width:auto;min-width:180px}.free-theme-label textarea{width:100%;box-sizing:border-box}.free-operation{margin-top:16px;overflow-wrap:anywhere}.free-current{border-top:1px solid var(--line,#dce4df);padding-top:10px}.free-choice-status:empty,.free-status:empty{display:none}.free-jump{display:flex;gap:18px;flex-wrap:wrap}.free-panel .previous-free{margin-top:18px}@media(max-width:760px){.free-options{grid-template-columns:1fr;gap:10px}.free-panel .free-submit{width:100%}.free-panel .section-heading{align-items:flex-start;flex-wrap:wrap}}
+
+.batch-promise{border-left:3px solid var(--accent);padding:6px 0 6px 14px;font-family:"Microsoft YaHei",sans-serif;font-weight:650;color:var(--ink);}
+.batch-promise small{display:block;margin-top:4px;font:400 13px/1.65 "Segoe UI","Microsoft YaHei",sans-serif;color:#6b786f;}
+.batch-settings>summary{cursor:pointer;padding:12px 0;font-size:14px;color:var(--accent);}
+.batch-settings[open]>summary{margin-bottom:12px;border-bottom:1px solid var(--line);}
+.backup-actions{display:flex;flex-wrap:wrap;gap:8px;}.backup-actions .primary{width:auto;}
+.batch-settings>summary:focus-visible{outline:2px solid #81af94;outline-offset:3px;}
+
+.free-footprint{margin-bottom:24px;}.free-footprint>summary{cursor:pointer;padding:12px 0;color:#6b786f;font-size:13px;}.free-footprint[open]>summary{margin-bottom:12px;}
+.free-footprint>summary:focus-visible{outline:2px solid #81af94;outline-offset:3px;}

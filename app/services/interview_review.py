@@ -38,7 +38,13 @@ def preview_review(connection, session_id, turn_id, request_key, client=None):
         from app.services.knowledge_editing import read_knowledge
         saved = read_knowledge(connection, existing[0])
         return {**saved, 'reference_verified': saved['reference_verification']['verified']}
+    from app.services.interview_conversation import selected_dialogue
     from app.services.module_jobs import run_module_job
+    frozen = connection.execute('SELECT r.input_json FROM model_job j JOIN model_request r ON r.job_id=j.id '
+                                'WHERE j.business_key=?', ('interview_review:' + request_key,)).fetchone()
+    frozen = json.loads(frozen[0]) if frozen else None
+    if frozen and (frozen.get('conversation_id') != session_id or frozen.get('selected_turn_id') != turn_id):
+        raise InterviewError('同一请求不能用于另一场面试或另一条追问')
     row = connection.execute(
         'SELECT v.id AS question_version_id,v.prompt,v.reference_text,v.category_path,t.question_id FROM interview_session s '
         'JOIN task t ON t.id=s.task_id JOIN question_version v ON v.id=s.question_version_id WHERE s.id=?',
@@ -53,12 +59,13 @@ def preview_review(connection, session_id, turn_id, request_key, client=None):
     )]
     if not any(turn['id'] == turn_id and turn['role'] == 'assistant' for turn in turns):
         raise InterviewError('请选择本场面试的一条追问')
-    context = {'main_question': row['prompt'], 'reference': row['reference_text'],
+    compact, window = selected_dialogue(turns, turn_id)
+    context = {'main_question': row['prompt'][:4000], 'reference': (row['reference_text'] or '')[:8000],
                'question_version_id': row['question_version_id'],
-               'turns': turns, 'selected_turn_id': turn_id, 'conversation_id': session_id}
+               'turns': compact, 'context_window': window, 'selected_turn_id': turn_id, 'conversation_id': session_id}
     from app.services.interview_answers import reference_context, saved_reference
-    context['selected_reference'] = saved_reference(connection, reference_context(connection, session_id, turn_id))[0]
-    target = hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
+    context['selected_reference'] = (saved_reference(connection, reference_context(connection, session_id, turn_id))[0] or '')[:20000]
+    target = frozen['source_id'] if frozen else hashlib.sha256(f'{session_id}:{turn_id}'.encode()).hexdigest()
     context['source_id'] = target
     response = run_module_job(connection, 'interview_review', target, request_key, client, context)
     return {**validate_review_preview(parse_model_json(response['response_text'])),

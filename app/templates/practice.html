@@ -25,7 +25,7 @@
   {% elif task.status == 'completed' %}
     <p>这次任务已完成，作答已保存。</p>
     {% if next_task %}<a class="button-link" href="{{ '/interview/' + next_task.session_id if next_task.session_id else '/practice/' + next_task.id }}">继续下一题 →</a>{% else %}<a href="/">返回今天看进度 →</a>{% endif %}
-    <p id="evaluation-summary">{{ '自评：会做' if latest and latest.code_self_result == 'can_solve' else '自评：不会做，已加入复习' if latest and latest.code_self_result else '评价：' + {'aligned':'通过','needs_review':'需要复习','unable_to_assess':'依据不足'}.get(adopted.verdict,'待评价') if adopted else '回答已保存，等待评价。' }}</p>
+    <p id="evaluation-summary">{{ '自评：会做' if latest and latest.code_self_result == 'can_solve' else ('自评：不会做。复习库保留另一个版本，请到复习库核对。' if review_basis_conflict else '自评：不会做，已加入复习') if latest and latest.code_self_result else '评价：' + {'aligned':'通过','needs_review':'需要复习','unable_to_assess':'依据不足'}.get(adopted.verdict,'待评价') if adopted else '回答已保存，等待评价。' }}</p>
     {% if latest and latest.review_round_id %}<p id="review-credit" class="muted">{{ '本次已计入有效通过。' if counted else '本次未增加有效通过：需采用通过评价、独立作答，同一天只记一次；查看答案后需间隔24小时。' }}</p>{% endif %}
     <button id="show-saved">查看已提交作答与评价</button>
     {% if job and job.status != 'complete' %}<p id="evaluation-job-state">评价状态：{{ {'pending':'等待评价','running':'正在评价','failed':'评价未完成，可重试'}.get(job.status,job.status) }}{% if job.error %} · {{ job.error }}{% endif %}</p>
@@ -35,7 +35,7 @@
       <p class="muted">修改模型或提示词后，可用当前设置重新评价已保存的回答。人工采用的评价会保留。</p>
       <button id="reevaluate" data-attempt-id="{{ latest.id }}">按当前设置重新评价</button>
       <label>修正评价<select id="manual-verdict"><option value="aligned">通过</option><option value="needs_review">需复习</option><option value="unable_to_assess">依据不足</option></select></label>
-      <button id="correct-evaluation" data-attempt-id="{{ latest.id }}">采用我的评价</button>
+      <button id="correct-evaluation" data-adoption-id="{{ adopted.id if adopted else '' }}" data-attempt-id="{{ latest.id }}">采用我的评价</button>
     {% endif %}
   {% else %}<p>这次任务已取消。</p>{% endif %}
   {% if task.question_type == 'theory' %}<button id="enter-review">加入复习库</button>{% endif %}

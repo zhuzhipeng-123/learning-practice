@@ -42,7 +42,14 @@ The authoritative design is `docs/original-learning-app-plan.md`. Do not treat t
 
 ## Fixed business rules
 
-- Latest clarified entry rule (September 13): opening or refreshing Today, Free Practice, or the Autumn entry shows no previous question list, batch, or session. Only an explicit action in that page may show its result. Do not reveal old results from page-load/focus polling or stored browser state. An explicitly opened interview session still supports continuous conversation and safe response recovery. Remove the standalone History module and its links; old /history bookmarks redirect to Review. Keep code/theory review collections and their per-question records. Submitted learning facts and review progress are not deleted.
+- Pending source candidates show the true total and cursor pagination; resolving earlier items must not hide later ones. Model-assisted selection partitions the entire eligible pool by serialized input and output budgets, freezes every partition and setting before calls, and only returns the union after all partitions succeed. Same-key retries keep the original pool and reject changed criteria. Before allocation, compare matched source versions with the frozen selection; reject source changes rather than applying old matches to new versions.
+- Never silently drop long variant sources or truncate source-analysis references. Keep full text when it fits, group analysis by actual JSON budget, and explicitly report a single oversized input without calling a model. Variant input and empty results remain stable across retries. Resource ceilings are centralized; this repair does not change the agreed review criteria or per-request token limits. Processing the full pool can require additional calls; show partition progress. Statistics labels must state their time window.
+
+- Free Practice entry requires an explicit confirmation under the current entry contract. Persist a separate confirmation record when accepting a new batch request. Legacy batches and replayed legacy requests must not silently become confirmed. Entry restores only confirmed batches for the current date, including their progress and recoverable failures. Automatic next-day local draws may inherit only confirmed settings; never bootstrap them from unconfirmed history. Keep submitted facts and review records. The existing draw/generate button is the confirmation action; do not add a redundant confirmation dialog.
+
+- Latest user clarification after the September 13 audit: once the user confirms random practice, Today and Free Practice restore the same day's accepted batch and progress after refresh, closing/reopening, navigation, and service restart. Page reads, focus, polling, and editing next-batch preferences must never redraw it. Use the server's Asia/Shanghai date; expired tasks do not carry into the next day, while submitted facts and review membership remain. On first opening a new day, restore confirmed daily targets and random-original free settings with idempotent local draws; never automatically run topic selection or variant models. Code and theory retain independent free batches. This supersedes the earlier empty-practice-entry rule. The Autumn entry still does not restore an old session list; explicitly opened sessions retain continuous conversation and safe request recovery. Keep /history redirected to Review and do not restore a standalone History module.
+
+- Audit repair acceptance: every accepted free request key, including a request deduplicated to another running batch, must recover its original batch. Late browser responses may clear only their own request key. Manual assessment retries preserve their original result and must not replace a newer adoption. Older code attempts cannot silently replace a newer active review basis. Interview drafts must remain separate even when a tab inherits sessionStorage. Review previews use stable session/turn identity and bounded frozen context. Code references include embedded Sheets or report an explicit parsing gap. Day-detail scopes match the task origins used by the heatmap. Provide export and isolated verification actions in the existing settings page.
 
 - Latest user rule (September 13): daily and free practice retain only the current explicitly drawn batch. Successful replacement retires earlier unfinished tasks, including started but unsubmitted work; expired daily/free tasks do not carry across days or appear in History. Keep review membership and submitted learning facts. Review has distinct code and theory modules. Failed generation does not publish partial tasks; exact retries recover the original batch without replacing a newer one. Explain local draws versus model generation and restored batches. Stale practice submissions must explain retirement in Chinese and guide the user back to the current batch.
 - Active interview pages reconcile outstanding follow-ups through read-only status checks after navigation or lost responses. Completed replies resume automatically without another model call; failures require explicit retry. Startup releases orphan model jobs; expired follow-up leases must remain explicitly recoverable. Preserve newer drafts and reject writes based on stale conversation revisions.
@@ -76,7 +83,7 @@ The authoritative design is `docs/original-learning-app-plan.md`. Do not treat t
 
 - Free code and theory practice are independent panels with their own source, mode, description, count, status, and retry controls. An operation may only lock controls that share its business object; unrelated work remains available.
 - Saving a personal reflection or daily plan updates only that region. Daily inputs may be unapplied while the saved task list stays visible; never clear another region's draft or request by reloading the whole page.
-- Persist free-practice batches, their frozen request, and results in SQLite. Fresh entry must not restore results automatically. After an explicit click, poll only that accepted batch; uncertain requests remain explicitly recoverable with their original keys. Editing settings within the current page must not erase the visible current result.
+- Persist free-practice batches, their frozen request, and results in SQLite. Restore today's accepted batch on entry without creating another batch or calling a model. Poll that batch while it is running; uncertain requests remain explicitly recoverable with their original keys. Editing settings within the current page must not erase the visible current result.
 - Free generation runs in a bounded background executor with separate database connections, no remote calls inside transactions, and at most one active batch per question type. Retrying a failed or interrupted batch reuses its original request and model snapshots, while that batch remains current on the same date; expired batches cannot be resumed.
 - Frontend acceptance must exercise delayed simultaneous code/theory generation, navigation while pending, completed-result restoration, failure and response-loss retries, cross-tab deduplication, independent form edits, and narrow layouts. Inspect shared statuses and whole-page reloads in other workflows too.
 
@@ -104,7 +111,7 @@ The authoritative design is `docs/original-learning-app-plan.md`. Do not treat t
 - User and model reflections are separate. Model claims must cite actual records and must not invent unseen code defects.
 - Place the heatmap and personal/model reflection at the beginning of the homepage; list code and theory practice separately. Model reflection covers successes, weak points and pending assessments with question/session context, without revealing answers.
 - Interview entry accepts a direction or model-suggested directions, with optional job focus. Also offer one-click review deep dives and classic questions without requiring a large question-bank selector.
-- Homepage practice lists and progress reflect saved base code/theory targets only; extra practice belongs on its own pages. Free practice has separate code/theory draws and shows each new batch only after an explicit draw. Old unfinished free tasks are retired after replacement or day rollover and do not appear in History. Changed daily inputs are unapplied until saved.
+- Homepage practice lists and progress reflect saved base code/theory targets only; extra practice belongs on its own pages. Free practice has separate code/theory draws and restores the same-day accepted batches. Old unfinished free tasks are retired after explicit replacement or day rollover. Changed inputs are unapplied until saved and never redraw a confirmed batch merely by navigation.
 - Theory question anchors must be H1, H2, or H3 headings. H4-H6 and ordinary paragraphs are reference content, never standalone questions. Empty container headings remain modules. Exclude legacy non-heading questions from future allocation without deleting tasks, versions, or answers.
 - Alignment accepts an optional user change description, retains it in the run report, and supplies it to model review. The description never proves deletion or replaces complete source discovery.
 - Default screens show learning outcomes, not API JSON, internal IDs, or provider configuration. Keep independent editable prompts in collapsed sections with purpose and output-budget rationale. Rollover refreshes clean pages on local-day change; dirty forms must retain text.
@@ -136,8 +143,22 @@ Keep these defaults easy to review. Do not describe them as confirmed hard const
 - Keep files around 150 lines where practical.
 - Add comments for non-obvious intent, data shape, side effects, and edge cases.
 - Do not add abstractions or features before a current phase requires them.
+- Keep runtime defaults and environment-backed paths, timezone, provider endpoints, and provider models in `app/config.py`; do not repeat machine paths, UTC offsets, or provider defaults in routes and services.
+- Convert timestamps through `app.services.learning_clock` for local-day behavior. SQL must not assume a fixed `+8 hours` offset.
+- Delete code only after repository-wide reference checks and relevant regression tests show that it is not part of the current application or compatibility surface.
 
 ## Commands
+
+Windows daily operation has one project-local entry: `打开学习练习.cmd`, backed by
+`scripts/service.ps1`. Do not create desktop shortcuts or a separate daily stop entry.
+Start reuses a healthy instance and opens the browser. The internal Stop action is
+for maintenance only and must verify the listening process belongs to this project's
+virtual environment before terminating it.
+Keep runtime logs in ignored `.runtime/`. Do not install startup tasks or change
+credentials, data directories, dependencies or autostart settings from the launcher.
+The `-Port` and `-NoBrowser` options support isolated launcher verification.
+Explain the single entry, closing the browser, reboot behavior and data backup in
+README.html. Keep maintenance commands in a collapsed troubleshooting section.
 
 ```bash
 uv sync --dev

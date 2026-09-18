@@ -4,18 +4,24 @@ import hashlib
 import json
 import os
 from datetime import UTC, datetime
-from pathlib import Path
 
 from dotenv import dotenv_values
 
 from app.adapters.agnes import AgnesClient, AgnesConfigurationError, AgnesSettings
+from app.config import (
+    DEFAULT_PROVIDER_MODELS,
+    DOTENV_PATH,
+    provider_base_url,
+    provider_default_model,
+)
+from app.services.model_budget import OUTPUT_TOKEN_MAX, OUTPUT_TOKEN_MIN, require_input_budget
 from app.storage.transactions import transaction
 
 PROVIDERS = {
-    "agnes": ("AGNES_API_KEY", "https://apihub.agnes-ai.com/v1"),
-    "openrouter": ("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1"),
+    "agnes": "AGNES_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
 }
-DEFAULT_MODELS = {"agnes": "agnes-2.5-flash", "openrouter": "nex-agi/nex-n2.5-mini:free"}
+DEFAULT_MODELS = DEFAULT_PROVIDER_MODELS
 MODULES = {
     "theory_evaluation": {
         "label": "答案评价",
@@ -138,7 +144,7 @@ def get_module_config(connection, module):
     if module not in MODULES:
         raise ValueError("unknown model module")
     row = connection.execute("SELECT * FROM llm_module_settings WHERE module=?", (module,)).fetchone()
-    value = dict(row) if row else {"module": module, "provider": "agnes", "model": DEFAULT_MODELS["agnes"],
+    value = dict(row) if row else {"module": module, "provider": "agnes", "model": provider_default_model("agnes"),
                                   "prompt": MODULES[module]["prompt"], "max_tokens": MODULE_GUIDANCE[module][1]}
     purpose, recommended, rationale = MODULE_GUIDANCE[module]
     return {**value, "label": MODULES[module]["label"], 'purpose': purpose, 'recommended_tokens': recommended, 'token_rationale': rationale}
@@ -147,8 +153,8 @@ def get_module_config(connection, module):
 def save_module_config(connection, module, provider, model, prompt, max_tokens):
     if module not in MODULES or provider not in PROVIDERS:
         raise ValueError("不支持的模块或模型服务")
-    if not model.strip() or len(model) > 200 or not prompt.strip() or len(prompt) > 16_000 or not 128 <= max_tokens <= 8192:
-        raise ValueError("请填写模型 ID 和提示词，输出上限为 128–8192")
+    if not model.strip() or len(model) > 200 or not prompt.strip() or len(prompt) > 16_000 or not OUTPUT_TOKEN_MIN <= max_tokens <= OUTPUT_TOKEN_MAX:
+        raise ValueError(f"请填写模型 ID 和提示词，输出上限为 {OUTPUT_TOKEN_MIN}–{OUTPUT_TOKEN_MAX}")
     if provider == "openrouter" and "/" not in model:
         raise ValueError("OpenRouter 模型 ID 需要包含服务前缀，例如 openrouter/free 或 provider/model:free")
     if provider == "agnes" and model.startswith("openrouter/"):
@@ -164,22 +170,20 @@ def save_module_config(connection, module, provider, model, prompt, max_tokens):
 def secret_value(name):
     if name in os.environ:
         return os.environ[name]
-    return dotenv_values(Path(__file__).resolve().parents[2] / ".env").get(name) or ""
+    return dotenv_values(DOTENV_PATH).get(name) or ""
 
 
 def provider_status():
-    return {name: bool(secret_value(key)) for name, (key, _) in PROVIDERS.items()}
+    return {name: bool(secret_value(key)) for name, key in PROVIDERS.items()}
 
 
 def client_for_config(config):
     provider = config["provider"]
-    key_name, base_url = PROVIDERS[provider]
+    key_name = PROVIDERS[provider]
     key = secret_value(key_name)
     if not key:
         raise AgnesConfigurationError(f"请在本机 .env 中配置 {key_name}")
-    if provider == "agnes":
-        base_url = os.environ.get("AGNES_BASE_URL", base_url)
-    return AgnesClient(AgnesSettings(base_url, key, config["model"]))
+    return AgnesClient(AgnesSettings(provider_base_url(provider), key, config["model"]))
 
 
 def freeze_request(connection, job_id, module, user_input):
@@ -224,8 +228,7 @@ def freeze_request(connection, job_id, module, user_input):
                                     '校正只支持其列明的事实，不能据此认可整个候选答案。检查数学定义、量纲、维度和推导假设。')
     prompt_hash = hashlib.sha256(config["system_prompt"].encode()).hexdigest()
     raw_input = json.dumps(user_input, ensure_ascii=False)
-    if len(raw_input) > 120_000:
-        raise ValueError("本次输入过长，请缩小范围后再试")
+    require_input_budget(user_input)
     connection.execute("INSERT INTO model_request(job_id,module,config_json,input_json,prompt_hash,response_text) VALUES (?,?,?,?,?,NULL)",
                        (job_id, module, json.dumps(config, ensure_ascii=False), raw_input, prompt_hash))
     return dict(connection.execute("SELECT * FROM model_request WHERE job_id=?", (job_id,)).fetchone())

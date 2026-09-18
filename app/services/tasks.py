@@ -5,6 +5,7 @@ import sqlite3
 from datetime import date, datetime
 from typing import Any
 
+from app.config import local_timezone_name
 from app.storage.ids import new_id
 from app.storage.transactions import atomic, transaction
 
@@ -63,10 +64,11 @@ def create_daily_plan(
                                (code_target, theory_target, json.dumps(module_quotas, ensure_ascii=False, sort_keys=True), plan_id))
         else:
             connection.execute(
-            "INSERT INTO daily_plan VALUES (?, ?, 'Asia/Shanghai', ?, ?, 0, ?, ?)",
+            "INSERT INTO daily_plan VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
             (
                 plan_id,
                 plan_date.isoformat(),
+                local_timezone_name(),
                 code_target,
                 theory_target,
                 json.dumps(module_quotas, ensure_ascii=False, sort_keys=True),

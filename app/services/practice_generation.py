@@ -5,6 +5,7 @@ import random
 from datetime import UTC, datetime
 
 from app.services.free_practice import find_new_originals
+from app.services.model_budget import VARIANT_LIMIT, require_input_budget
 from app.services.model_jobs import ModelJobError
 from app.services.model_json import parse_model_json
 from app.services.module_jobs import run_module_job
@@ -36,31 +37,59 @@ def validate_variants(context, value):
 
 
 def generate_variants(connection, plan_id, theme, count, question_type, only_new, request_key, selected_ids=None, client=None):
-    if question_type not in {'code', 'theory'} or not 1 <= count <= 3:
-        raise ValueError('变种题请选择代码或八股，每次生成1至3道')
+    if question_type not in {'code', 'theory'} or not 1 <= count <= VARIANT_LIMIT:
+        raise ValueError(f'变种题请选择代码或八股，每次生成1至{VARIANT_LIMIT}道')
     spec = {'plan_id': plan_id, 'theme': theme, 'count': count, 'question_type': question_type, 'only_new': only_new}
     previous = _load_idempotent(connection, request_key, 'practice_variants', spec)
     if previous:
         return previous
-    saved = connection.execute("SELECT r.input_json FROM model_request r JOIN model_job j ON j.id=r.job_id "
-                               "WHERE j.business_key=?", ('practice_generation:' + request_key,)).fetchone()
-    if saved:
-        context = json.loads(saved[0])
-        if context['spec'] != spec:
-            raise ValueError('同一请求标识不能用于不同的变种要求')
-    else:
-        rows = find_new_originals(connection, '', only_new, question_type)
-        rows = [dict(row) for row in rows if row['reference_text'] and len(row['prompt']) + len(row['reference_text']) <= 24000
-                and (selected_ids is None or row['id'] in selected_ids)]
-        chosen = random.sample(rows, min(count, len(rows)))
-        from app.services.reference_corrections import attach_corrections
-        context = {'source_id': 'variant:' + request_key, 'spec': spec, 'question_type': question_type,
-                   'questions': attach_corrections(connection, chosen)}
+    context = _variant_input(connection, spec, request_key, selected_ids)
     if not context['questions']:
-        return {'requested': count, 'added': 0, 'missing': count, 'task_ids': []}
+        return _empty_variants(connection, spec, request_key, context.get('warnings', []))
+    require_input_budget(context)
     response = run_module_job(connection, 'practice_generation', context['source_id'], request_key, client, context)
     items = validate_variants(context, parse_model_json(response['response_text']))
     return _publish_variants(connection, context, items, response['job_id'], request_key)
+
+
+@atomic
+def _variant_input(connection, spec, request_key, selected_ids):
+    key = 'variant-input:' + request_key
+    context = _load_idempotent(connection, key, 'variant_input', spec)
+    if context is not None:
+        return context
+    legacy = connection.execute('SELECT r.input_json FROM model_request r JOIN model_job j ON j.id=r.job_id '
+                                'WHERE j.business_key=?', ('practice_generation:' + request_key,)).fetchone()
+    if legacy:
+        context = json.loads(legacy[0])
+        if context['spec'] != spec:
+            raise ValueError('同一请求标识不能用于不同的变种要求')
+    else:
+        from app.services.reference_corrections import attach_corrections
+        rows = [dict(row) for row in find_new_originals(connection, '', spec['only_new'], spec['question_type'])
+                if selected_ids is None or row['id'] in selected_ids]
+        if selected_ids is not None:
+            from app.services.practice_selection import validate_selection_sources
+            validate_selection_sources(connection, request_key, rows)
+        usable = [row for row in rows if row['reference_text'] and row['reference_text'].strip()]
+        chosen = random.sample(usable, min(spec['count'], len(usable)))
+        missing_reference = len(rows) - len(usable)
+        context = {'source_id': 'variant:' + request_key, 'spec': spec, 'question_type': spec['question_type'],
+                   'questions': attach_corrections(connection, chosen),
+                   'warnings': [f'{missing_reference} 道候选缺少参考资料，未用于生成。'] if missing_reference else []}
+    # This also freezes a too-large selection, so a retry cannot silently draw other sources.
+    _save_idempotent(connection, key, 'variant_input', spec, context, datetime.now(UTC).isoformat())
+    return context
+
+
+@atomic
+def _empty_variants(connection, spec, request_key, warnings):
+    existing = _load_idempotent(connection, request_key, 'practice_variants', spec)
+    if existing is not None:
+        return existing
+    value = {'requested': spec['count'], 'added': 0, 'missing': spec['count'], 'task_ids': [], 'warnings': warnings}
+    _save_idempotent(connection, request_key, 'practice_variants', spec, value, datetime.now(UTC).isoformat())
+    return value
 
 
 @atomic
@@ -85,6 +114,7 @@ def _publish_variants(connection, context, items, job_id, request_key):
         connection.execute("INSERT INTO version_resources VALUES (?,?,'[]')", (version, json.dumps(['variant-reference:' + version])))
         question_ids.append(question_id)
     result = add_tasks(connection, spec['plan_id'], question_ids, 'free_practice', 'variant-tasks:' + request_key)
-    value = {'requested': spec['count'], 'added': result['added'], 'missing': spec['count'] - result['added'], 'task_ids': result['created_task_ids']}
+    value = {'requested': spec['count'], 'added': result['added'], 'missing': spec['count'] - result['added'],
+             'task_ids': result['created_task_ids'], 'warnings': context.get('warnings', [])}
     _save_idempotent(connection, request_key, 'practice_variants', spec, value, now)
     return value

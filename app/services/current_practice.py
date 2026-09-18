@@ -4,6 +4,7 @@ import json
 import random
 from datetime import UTC, datetime
 
+from app.config import local_timezone_name
 from app.services.learning_clock import local_today
 from app.services.tasks import (
     IdempotencyConflictError,
@@ -20,6 +21,22 @@ def current_daily_batch(connection, plan_id):
     row = connection.execute("SELECT result_json FROM idempotency_record WHERE operation='daily_batch' "
         "AND json_extract(result_json,'$.plan_id')=? ORDER BY rowid DESC LIMIT 1", (plan_id,)).fetchone()
     return json.loads(row[0]) if row else None
+
+
+@atomic
+def restore_daily(connection):
+    day = local_today()
+    plan = connection.execute('SELECT id FROM daily_plan WHERE plan_date=?', (day.isoformat(),)).fetchone()
+    current = current_daily_batch(connection, plan[0]) if plan else None
+    if current:
+        return current
+    previous = connection.execute("SELECT p.* FROM idempotency_record r JOIN daily_plan p "
+        "ON p.id=json_extract(r.result_json,'$.plan_id') WHERE r.operation='daily_batch' "
+        "AND p.plan_date<? ORDER BY p.plan_date DESC,r.rowid DESC LIMIT 1", (day.isoformat(),)).fetchone()
+    if not previous:
+        return None
+    return draw_daily_batch(connection, day, previous['code_target'], previous['theory_target'],
+                            json.loads(previous['allocation_json']), 'daily-auto:' + day.isoformat(), '')
 
 
 def retire_tasks(connection, task_ids):
@@ -64,8 +81,18 @@ def draw_daily_batch(connection, day, code_target, theory_target, quotas, reques
     selected, shortages = _select_questions(connection, code_target, theory_target, quotas, random.Random())
     plan_id, now = plan[0] if plan else new_id('plan'), datetime.now(UTC).isoformat()
     if not plan:
-        connection.execute("INSERT INTO daily_plan VALUES (?,?,'Asia/Shanghai',?,?,0,?,?)",
-                           (plan_id, day.isoformat(), code_target, theory_target, json.dumps(quotas), now))
+        connection.execute(
+            "INSERT INTO daily_plan VALUES (?,?,?,?,?,0,?,?)",
+            (
+                plan_id,
+                day.isoformat(),
+                local_timezone_name(),
+                code_target,
+                theory_target,
+                json.dumps(quotas),
+                now,
+            ),
+        )
     else:
         connection.execute('UPDATE daily_plan SET code_target=?,theory_target=?,allocation_json=? WHERE id=?',
                            (code_target, theory_target, json.dumps(quotas), plan_id))

@@ -18,7 +18,6 @@ from app.services.model_jobs import ModelJobError
 from app.services.plan_editing import update_daily_plan
 from app.services.practice import (
     add_theory_to_review,
-    adopt_theory_evaluation,
     expose_answer,
     start_attempt,
     submit_code,
@@ -99,6 +98,7 @@ class AlignmentRequest(BaseModel):
 
 
 class EvaluationCorrection(BaseModel):
+    expected_adoption: str | None = None
     verdict: Literal["aligned", "needs_review", "unable_to_assess"]
 
 
@@ -287,16 +287,25 @@ def saved_answer(task_id: str, database: Database):
             "note": attempt["note"], "evaluations": [dict(row) for row in evaluations]}
 
 
+@router.post('/practice/restore')
+def restore_today(database: Database):
+    from app.services.current_practice import restore_daily
+    return {'batch': restore_daily(database)}
+
+
 @router.post("/attempts/{attempt_id}/evaluation")
-def correct_evaluation(attempt_id: str, body: EvaluationCorrection, database: Database):
+def correct_evaluation(attempt_id: str, body: EvaluationCorrection, database: Database, idempotency_key: RequestKey):
     attempt = database.execute("SELECT a.id FROM attempt a JOIN task t ON t.id=a.task_id "
                                "JOIN question q ON q.id=t.question_id WHERE a.id=? "
                                "AND a.submitted_at IS NOT NULL AND q.question_type='theory'",
                                (attempt_id,)).fetchone()
     if attempt is None:
         raise HTTPException(404, "没有可更正的理论作答")
-    return {"evaluation_id": adopt_theory_evaluation(database, attempt_id, body.verdict,
-                                                      datetime.now(UTC), corrected_by_user=True)}
+    from app.services.practice import correct_theory_evaluation
+    try:
+        return correct_theory_evaluation(database, attempt_id, body.verdict, idempotency_key, body.expected_adoption)
+    except IdempotencyConflictError as error:
+        raise HTTPException(409, str(error)) from error
 
 
 @router.post("/tasks/{task_id}/expose-answer")
@@ -334,9 +343,8 @@ def task_material(task_id: str, block_id: str, request: Request, database: Datab
 
 @router.post("/questions/{question_id}/start-review")
 def start_review(question_id: str, idempotency_key: RequestKey, database: Database):
-    from zoneinfo import ZoneInfo
     try:
-        return start_review_task(database, question_id, datetime.now(ZoneInfo("Asia/Shanghai")).date(), idempotency_key)
+        return start_review_task(database, question_id, local_today(), idempotency_key)
     except ValueError as error:
         raise HTTPException(409, str(error)) from error
 

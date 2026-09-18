@@ -3,11 +3,9 @@
 from dataclasses import asdict
 
 from app.services.free_practice import add_free_practice
+from app.services.model_budget import ORIGINAL_LIMIT, VARIANT_LIMIT
 from app.services.practice_generation import generate_variants
 from app.services.practice_selection import select_by_description
-
-ORIGINAL_LIMIT = 30
-VARIANT_LIMIT = 3
 
 
 def validate_spec(spec):

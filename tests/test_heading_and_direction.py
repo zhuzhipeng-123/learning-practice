@@ -171,7 +171,7 @@ def test_free_api_draws_only_requested_type_and_hides_references(monkeypatch, ki
         home = client.get('/').text
         assert all(t['id'] not in home for t in value['tasks'])
         history = client.get('/free-practice').text
-        assert all(t['id'] not in history for t in value['tasks'])
+        assert all(t['id'] in history for t in value['tasks'])
         assert client.get('/api/free-practice/batches/' + batch_id).json()['result'] == value
 
 

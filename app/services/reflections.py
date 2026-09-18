@@ -2,6 +2,7 @@ import json
 import sqlite3
 from datetime import UTC, date, datetime
 
+from app.services.learning_clock import utc_bounds_for_local_days
 from app.services.tasks import _load_idempotent, _save_idempotent
 from app.storage.ids import new_id
 from app.storage.transactions import atomic
@@ -86,6 +87,7 @@ def activity_timeline(
     connection: sqlite3.Connection,
     activity_date: date,
 ) -> dict[str, object]:
+    start_at, end_at = utc_bounds_for_local_days(activity_date, activity_date)
     attempts = connection.execute(
         "SELECT a.id, a.task_id, a.submitted_at, a.code_self_result, a.answer_text, "
         "a.note,v.prompt,v.category_path,t.origin, t.question_id FROM attempt a JOIN task t ON t.id=a.task_id "
@@ -95,14 +97,16 @@ def activity_timeline(
     ).fetchall()
     turns = connection.execute(
         "SELECT it.id, it.session_id, it.role, it.created_at FROM interview_turn it "
-        "WHERE date(it.created_at, '+8 hours')=? ORDER BY it.created_at",
-        (activity_date.isoformat(),),
+        "WHERE julianday(it.created_at)>=julianday(?) AND julianday(it.created_at)<julianday(?) "
+        "ORDER BY it.created_at",
+        (start_at, end_at),
     ).fetchall()
     task_activity = {row["task_id"] for row in attempts}
     session_tasks = connection.execute(
         "SELECT DISTINCT s.task_id FROM interview_session s JOIN interview_turn t "
-        "ON t.session_id=s.id WHERE date(t.created_at, '+8 hours')=? AND t.role='user'",
-        (activity_date.isoformat(),),
+        "ON t.session_id=s.id WHERE julianday(t.created_at)>=julianday(?) "
+        "AND julianday(t.created_at)<julianday(?) AND t.role='user'",
+        (start_at, end_at),
     ).fetchall()
     task_activity.update(row["task_id"] for row in session_tasks)
     return {

@@ -1,11 +1,9 @@
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from app.storage.ids import new_id
 
-SHANGHAI = ZoneInfo("Asia/Shanghai")
 REQUIRED_VALID_PASSES = 5
 REQUIRED_SPAN_SECONDS = 604_800
 
@@ -41,6 +39,15 @@ def enter_review(
     )
     _record_event(connection, round_id, "entered", happened_at, entered_by)
     return round_id
+
+
+def enter_code_review(connection, question_id, basis_id, entered_by, happened_at):
+    active = get_active_round(connection, question_id)
+    current = connection.execute('SELECT v.review_basis_id FROM question q JOIN question_version v '
+                                 'ON v.id=q.current_version_id WHERE q.id=?', (question_id,)).fetchone()
+    if active and active['review_basis_id'] != basis_id and current[0] != basis_id:
+        return None
+    return enter_review(connection, question_id, basis_id, entered_by, happened_at)
 
 
 def record_valid_pass(

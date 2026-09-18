@@ -1,8 +1,11 @@
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from app.parsers.docx import HEADING_TYPES, block_text
+from app.services.learning_clock import local_date, utc_bounds_for_local_days
 from app.services.wiki_sources import source_prefix
+
+HEATMAP_DAYS = 182
 
 
 def module_tree(connection, question_type='theory'):
@@ -60,18 +63,37 @@ def latest_reflections(connection, day):
 
 
 def activity_counts(connection, start, end, scope='all'):
-    rows = connection.execute(
-        "WITH activity(day,task_id) AS (SELECT activity_date,task_id FROM attempt WHERE submitted_at IS NOT NULL "
-        "UNION SELECT date(it.created_at,'+8 hours'),s.task_id FROM interview_turn it "
-        "JOIN interview_session s ON s.id=it.session_id WHERE it.role='user') "
-        "SELECT a.day,COUNT(*) total,SUM(q.question_type='code') code,SUM(q.question_type='theory') theory "
-        "FROM activity a JOIN task t ON t.id=a.task_id JOIN question q ON q.id=t.question_id "
-        "WHERE a.day BETWEEN ? AND ? AND (?='all' OR t.origin=?) GROUP BY a.day", (start.isoformat(), end.isoformat(), scope, scope))
-    return {row["day"]: dict(row) for row in rows}
+    activity = {}
+    for row in connection.execute(
+        "SELECT DISTINCT a.activity_date day,a.task_id,q.question_type FROM attempt a "
+        "JOIN task t ON t.id=a.task_id JOIN question q ON q.id=t.question_id "
+        "WHERE a.submitted_at IS NOT NULL AND a.activity_date BETWEEN ? AND ? "
+        "AND (?='all' OR t.origin=?)",
+        (start.isoformat(), end.isoformat(), scope, scope),
+    ):
+        activity[(row["day"], row["task_id"])] = row["question_type"]
+    start_at, end_at = utc_bounds_for_local_days(start, end)
+    for row in connection.execute(
+        "SELECT it.created_at,s.task_id,q.question_type FROM interview_turn it "
+        "JOIN interview_session s ON s.id=it.session_id "
+        "JOIN task t ON t.id=s.task_id JOIN question q ON q.id=t.question_id "
+        "WHERE it.role='user' AND julianday(it.created_at)>=julianday(?) "
+        "AND julianday(it.created_at)<julianday(?) AND (?='all' OR t.origin=?)",
+        (start_at, end_at, scope, scope),
+    ):
+        day = local_date(datetime.fromisoformat(row["created_at"]))
+        if start <= day <= end:
+            activity[(day.isoformat(), row["task_id"])] = row["question_type"]
+    counts = {}
+    for (day, _), question_type in activity.items():
+        value = counts.setdefault(day, {"day": day, "total": 0, "code": 0, "theory": 0})
+        value["total"] += 1
+        value[question_type] += 1
+    return counts
 
 
 def heatmap(connection, today, scope='all'):
-    start = today - timedelta(days=181)
+    start = today - timedelta(days=HEATMAP_DAYS - 1)
     start -= timedelta(days=start.weekday())
     counts = activity_counts(connection, start, today, scope)
     cells = []
@@ -91,20 +113,45 @@ def day_details(connection, day: date, scope='all'):
         "JOIN task t ON t.id=a.task_id JOIN question q ON q.id=t.question_id JOIN question_version v ON v.id=a.question_version_id "
         "LEFT JOIN evaluation e ON e.attempt_id=a.id AND e.adopted=1 WHERE a.activity_date=? AND a.submitted_at IS NOT NULL "
         "AND (?='all' OR t.origin=?) ORDER BY a.submitted_at", (value, scope, scope))]
-    interviews = [dict(row) for row in connection.execute(
-        "SELECT s.id,v.prompt,COUNT(*) answers FROM interview_session s JOIN interview_turn it ON it.session_id=s.id "
-        "JOIN question_version v ON v.id=s.question_version_id WHERE it.role='user' AND date(it.created_at,'+8 hours')=? "
-        "GROUP BY s.id", (value,))]
-    if scope not in {'all', 'interview'}:
-        interviews = []
+    start_at, end_at = utc_bounds_for_local_days(day, day)
+    interview_rows = connection.execute(
+        "SELECT s.id,s.task_id,t.origin,q.question_type,v.prompt,v.category_path,it.created_at "
+        "FROM interview_session s JOIN interview_turn it ON it.session_id=s.id "
+        "JOIN task t ON t.id=s.task_id JOIN question q ON q.id=t.question_id "
+        "JOIN question_version v ON v.id=s.question_version_id WHERE it.role='user' "
+        "AND julianday(it.created_at)>=julianday(?) AND julianday(it.created_at)<julianday(?) "
+        "AND (?='all' OR t.origin=?)",
+        (start_at, end_at, scope, scope),
+    )
+    interviews_by_id = {}
+    for row in interview_rows:
+        if local_date(datetime.fromisoformat(row["created_at"])) != day:
+            continue
+        item = interviews_by_id.setdefault(row["id"], {**dict(row), "answers": 0})
+        item["answers"] += 1
+    interviews = list(interviews_by_id.values())
     reflections = [row for row in latest_reflections(connection, day).values() if row]
     groups = {'can': [], 'cannot': [], 'pending': [], 'unknown': []}
     latest = {attempt['task_id']: attempt for attempt in attempts}
+    for interview in interviews:
+        if interview['task_id'] not in latest:
+            groups['pending'].append({**interview, 'session_id': interview['id'], 'verdict': None})
     for attempt in latest.values():
         outcome = attempt['code_self_result'] if attempt['question_type'] == 'code' else attempt['verdict']
         key = {'can_solve': 'can', 'cannot_solve': 'cannot', 'aligned': 'can', 'needs_review': 'cannot', 'unable_to_assess': 'unknown'}.get(outcome, 'pending')
         groups[key].append(attempt)
     return {"day": value, "scope": scope, "groups": groups, "activity": activity_counts(connection, day, day, scope).get(value, {"total": 0, "code": 0, "theory": 0}),
             "attempts": attempts, "interviews": interviews, "reflections": reflections,
-            "completed": connection.execute("SELECT COUNT(*) FROM task WHERE date(completed_at,'+8 hours')=? AND (?='all' OR origin=?)", (value, scope, scope)).fetchone()[0],
-            "valid_passes": connection.execute("SELECT COUNT(*) FROM valid_review_pass p JOIN attempt a ON a.id=p.attempt_id JOIN task t ON t.id=a.task_id WHERE date(p.submitted_at,'+8 hours')=? AND (?='all' OR t.origin=?)", (value, scope, scope)).fetchone()[0]}
+            "completed": _completed_count(connection, day, scope),
+            "valid_passes": connection.execute("SELECT COUNT(*) FROM valid_review_pass p JOIN attempt a ON a.id=p.attempt_id JOIN task t ON t.id=a.task_id WHERE a.activity_date=? AND (?='all' OR t.origin=?)", (value, scope, scope)).fetchone()[0]}
+
+
+def _completed_count(connection, day, scope):
+    start_at, end_at = utc_bounds_for_local_days(day, day)
+    rows = connection.execute(
+        "SELECT completed_at FROM task WHERE completed_at IS NOT NULL "
+        "AND julianday(completed_at)>=julianday(?) AND julianday(completed_at)<julianday(?) "
+        "AND (?='all' OR origin=?)",
+        (start_at, end_at, scope, scope),
+    )
+    return sum(local_date(datetime.fromisoformat(row[0])) == day for row in rows)

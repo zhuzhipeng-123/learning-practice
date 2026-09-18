@@ -5,14 +5,15 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.config import provider_default_model
 from app.routes.model_errors import model_error_response
 from app.services.llm_config import (
-    DEFAULT_MODELS,
     MODULES,
     get_module_config,
     provider_status,
     save_module_config,
 )
+from app.services.model_budget import OUTPUT_TOKEN_MAX, OUTPUT_TOKEN_MIN
 from app.services.model_jobs import ModelJobError
 from app.services.module_jobs import run_module_job
 from app.storage.dependencies import get_database
@@ -27,7 +28,7 @@ class ModuleSettings(BaseModel):
     provider: Literal["agnes", "openrouter"]
     model: str = Field(min_length=1, max_length=200)
     prompt: str = Field(min_length=1, max_length=16_000)
-    max_tokens: int = Field(ge=128, le=8192)
+    max_tokens: int = Field(ge=OUTPUT_TOKEN_MIN, le=OUTPUT_TOKEN_MAX)
 
 
 class ReflectionGeneration(BaseModel):
@@ -81,7 +82,7 @@ def set_model_provider(body: GlobalProvider, database: Database):
     with transaction(database):
         for module in MODULES:
             config = get_module_config(database, module)
-            save_module_config(database, module, body.provider, DEFAULT_MODELS[body.provider], config['prompt'], config['max_tokens'])
+            save_module_config(database, module, body.provider, provider_default_model(body.provider), config['prompt'], config['max_tokens'])
     return {'updated': len(MODULES)}
 
 

@@ -3,24 +3,20 @@ const root = document.querySelector('[data-session-id]');
 const sessionId = root.dataset.sessionId;
 const output = document.querySelector('#interview-output');
 const input = document.querySelector('#interview-answer');
-let draftScope = 'shared-fallback';
-try {
-  draftScope = sessionStorage.getItem('learning-interview-tab') || crypto.randomUUID();
-  sessionStorage.setItem('learning-interview-tab', draftScope);
-} catch { /* Restricted storage retains the existing in-memory draft fallback. */ }
-const draftKey = `learning-interview-draft-${sessionId}-${draftScope}`;
+const draftStore = tabLearningStore;
+const draftKey = `learning-interview-draft-${sessionId}`;
 const draftRevisionKey = `${draftKey}-revision`;
-const legacyDraft = learningStore.get(`learning-interview-draft-${sessionId}`);
-if (input && typeof legacyDraft === 'string' && learningStore.get(draftKey) === null) {
-  learningStore.set(draftKey, legacyDraft);
-  const revision = learningStore.get(`learning-interview-draft-revision-${sessionId}`);
-  if (typeof revision === 'string') learningStore.set(draftRevisionKey, revision);
-  learningStore.remove(`learning-interview-draft-${sessionId}`);
-  learningStore.remove(`learning-interview-draft-revision-${sessionId}`);
+let previousScope;
+try { previousScope = sessionStorage.getItem('learning-interview-tab'); } catch { /* Memory fallback. */ }
+const previousKey = previousScope ? `${draftKey}-${previousScope}` : draftKey;
+if (draftStore.get(draftKey) === null && typeof learningStore.get(previousKey) === 'string') {
+  draftStore.set(draftKey, learningStore.get(previousKey));
+  draftStore.set(draftRevisionKey, learningStore.get(previousScope ? `${previousKey}-revision` : `learning-interview-draft-revision-${sessionId}`));
+  learningStore.remove(previousKey);
 }
-const draft = bindDraft(input, draftKey);
+const draft = bindDraft(input, draftKey, draftStore);
 const pendingAnswer = learningStore.get(`learning-interview-${sessionId}-save`);
-if (input && pendingAnswer && typeof learningStore.get(draftKey) !== 'string') input.value = pendingAnswer.values.content;
+if (input && pendingAnswer && typeof draftStore.get(draftKey) !== 'string') input.value = pendingAnswer.values.content;
 let referenceRevision = 0;
 const referencePanel = document.querySelector('#interview-reference-panel');
 function hideReference() { referenceRevision += 1; referencePanel.hidden = true; }
@@ -92,8 +88,8 @@ function scheduleConversation() {
 }
 const active = () => root.dataset.sessionStatus === 'active';
 input?.addEventListener('input', () => {
-  if (!input.value.trim()) learningStore.remove(draftRevisionKey);
-  else if (typeof learningStore.get(draftRevisionKey) !== 'string' && observedRevision !== null) learningStore.set(draftRevisionKey, observedRevision);
+  if (!input.value.trim()) draftStore.remove(draftRevisionKey);
+  else if (typeof draftStore.get(draftRevisionKey) !== 'string' && observedRevision !== null) draftStore.set(draftRevisionKey, observedRevision);
 });
 function syncControls() {
   if (busy) return;
@@ -141,7 +137,7 @@ async function loadConversation(confirmDraft=false) {
     output.textContent = '面试官已回复，已自动恢复这一轮，可以继续回答。';
   }
   showDialogue(data);
-  if (confirmDraft && input?.value.trim()) learningStore.set(draftRevisionKey, observedRevision);
+  if (confirmDraft && input?.value.trim()) draftStore.set(draftRevisionKey, observedRevision);
   status.textContent = confirmDraft && input?.value.trim() ? '对话已刷新，草稿保留。请核对当前问题，再发送。' : data.turns.length ? '已恢复连续对话，参考答案仍默认隐藏。' : '面试官已提出第一问，写下你的思路开始吧。';
   if (['running','pending'].includes(continuation?.status)) status.textContent = '面试官正在生成并核对下一问，完成后自动显示。可以离开再回来，当前回答已保存。';
   else if (['failed','expired'].includes(continuation?.status)) status.textContent = '这一轮模型生成未完成，回答已保存。点击“继续面试”按原请求重试。';
@@ -169,7 +165,7 @@ async function perform(action, restored=null) {
   let key = `learning-interview-${sessionId}-${step}`;
   const old = learningStore.get(key);
   let body = restored || (step === 'save' ? {role:'user', content:input.value, created_at:old?.values.created_at || new Date().toISOString(),
-    expected_revision:typeof learningStore.get(draftRevisionKey) === 'string' ? learningStore.get(draftRevisionKey) : observedRevision}
+    expected_revision:typeof draftStore.get(draftRevisionKey) === 'string' ? draftStore.get(draftRevisionKey) : observedRevision}
     : step === 'end' ? {ended_at:old?.values.ended_at || new Date().toISOString()}
     : step === 'followup' ? {expected_revision:observedRevision} : {});
   let saved = false;
@@ -185,7 +181,7 @@ async function perform(action, restored=null) {
     if (step === 'save') {
       saved = true;
       draft.clear(body.content);
-      if (input.value === body.content) { input.value = ''; learningStore.remove(draftRevisionKey); }
+      if (input.value === body.content) { input.value = ''; draftStore.remove(draftRevisionKey); }
       await loadConversation();
       if (chain && !input.value.trim()) {
         step = 'followup'; key = `learning-interview-${sessionId}-followup`; body = {expected_revision:data.turn_id};
@@ -321,7 +317,7 @@ for (const button of document.querySelectorAll('[data-interview-code]')) {
     let complete = false;
     try {
       const data = await savedRequest(`learning-interview-code-${id}`, `/api/interviews/${id}/code-assessment`, restored || {result:button.dataset.interviewCode});
-      output.textContent = data.result === 'can_solve' ? '已记录会做；这次面试不增加独立复习次数。' : '已记录不会做，并加入复习库。';
+      output.textContent = data.result === 'can_solve' ? '已记录会做；这次面试不增加独立复习次数。' : data.review_basis_conflict ? '已记录不会做。复习库保留另一个版本，请到复习库核对。' : '已记录不会做，并加入复习库。';
       complete = true;
     } catch (error) {
       output.textContent = error.message;

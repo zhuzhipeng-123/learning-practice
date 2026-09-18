@@ -1,13 +1,12 @@
-import os
 import sqlite3
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app.config import DOTENV_PATH, PROJECT_ROOT, learning_data_directory
 from app.routes.api import router as api_router
 from app.routes.error_pages import configure_error_pages, error_response
 from app.routes.extended_api import router as extended_api_router
@@ -25,7 +24,6 @@ from app.services.runtime_state import RuntimeVersionGuard
 from app.services.tasks import IdempotencyConflictError
 from app.storage.database import connect_database, initialize_database
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES = Jinja2Templates(directory=PROJECT_ROOT / "app" / "templates")
 
 
@@ -40,8 +38,8 @@ TEMPLATES.env.globals['asset_url'] = asset_url
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize the local database before serving requests."""
-    load_dotenv(PROJECT_ROOT / ".env", override=False)
-    data_directory = Path(os.environ.get("LEARNING_DATA_DIR", PROJECT_ROOT / "data")).resolve()
+    load_dotenv(DOTENV_PATH, override=False)
+    data_directory = learning_data_directory()
     data_directory.mkdir(parents=True, exist_ok=True)
     database_path = data_directory / "learning.db"
     connection = connect_database(database_path)
