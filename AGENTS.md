@@ -23,6 +23,22 @@ Expanded model involvement in alignment is conditional on the documented compara
 experiment; retaining rules or optional assistance is an acceptable outcome.
 Keep execution progress in that plan instead of creating another phase report.
 
+Latest user clarification (September 21): the Today theory scope is the individual
+descendant-document level under the Wiki root named `八股`. The outer Wiki root is not one
+global switch. Users may exclude those individual documents, not headings, modules, or
+questions inside a document. Keep the internal heading tree for parsing, provenance, and
+alignment, but do not expose it as daily scope controls. Existing fine-grained saved scope
+collapses to its containing document when the user next confirms a batch. The daily page
+shows compact document choices; unavailable documents stay in a secondary collapsed region.
+This clarification supersedes the older parent/child checkbox and module-quota UI rules.
+
+Latest homepage layout clarification (September 21): show the daily learning footprint
+immediately below the page heading and expanded by default. Keep the daily practice and
+planning workflow in the middle. Put the personal/model daily reflection at the very end of
+the Today page and expand it by default. Both regions may remain collapsible after their
+initial expanded state. This supersedes older rules that put both regions together or placed
+practice before the footprint.
+
 The B4 experiment runner is synthetic-data only. Any future real B/C rerun requires explicit
 authorization and one named stage per invocation. Preserve the 40-attempt cap,
 60-minute soft budget, frozen fingerprints, atomic checkpoint/resume behavior, and
@@ -141,7 +157,7 @@ are reported by their actual stage instead of being added to directory-read erro
 - One interview main question is one task. Follow-ups do not increase the target. Derived questions are isolated from Feishu deletion logic.
 - Save an answer before model evaluation. Model failure leaves it pending and must not duplicate completion or valid passes.
 - User and model reflections are separate. Model claims must cite actual records and must not invent unseen code defects.
-- Place the heatmap and personal/model reflection at the beginning of the homepage; list code and theory practice separately. Model reflection covers successes, weak points and pending assessments with question/session context, without revealing answers.
+- Place the expanded heatmap at the beginning of the homepage and the expanded personal/model reflection at the end; list code and theory practice separately. Model reflection covers successes, weak points and pending assessments with question/session context, without revealing answers.
 - Interview entry accepts a direction or model-suggested directions, with optional job focus. Also offer one-click review deep dives and classic questions without requiring a large question-bank selector.
 - Homepage practice lists and progress reflect saved base code/theory targets only; extra practice belongs on its own pages. Free practice has separate code/theory draws and restores the same-day accepted batches. Old unfinished free tasks are retired after explicit replacement or day rollover. Changed inputs are unapplied until saved and never redraw a confirmed batch merely by navigation.
 - Theory H1/H2 headings are modules. H3 is normally a question; an explicit-question H3 remains the question when its answer starts with H4-H6. Only a non-question H3 may become a container. H4-H6 are interpreted from context, so a question-like deeper heading after an empty container may be a question while a deeper heading inside an H3 answer remains reference structure. Ordinary paragraphs are reference content. Exclude incompatible legacy non-heading questions from future allocation without deleting tasks, versions, or answers.

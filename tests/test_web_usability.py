@@ -122,13 +122,15 @@ def test_registered_source_cannot_silently_keep_a_different_question_type(databa
         register_source(database, url, 'document', 'theory')
 
 
-def test_today_prioritizes_practice_and_progressively_discloses_reflection_and_footprint():
+def test_today_opens_with_footprint_and_ends_with_reflection():
     with TestClient(app) as client:
         html = client.get('/').text
+    assert html.index('class="page-heading"') < html.index('heatmap-panel')
+    assert html.index('heatmap-panel') < html.index('id="daily-practice"')
     assert html.index('id="daily-practice"') < html.index('id="daily-plan"')
-    assert html.index('id="daily-plan"') < html.index('class="progressive-sections"')
-    assert '<details class="panel progressive-panel"><summary><span>今天的复盘</span>' in html
-    assert '<details class="panel progressive-panel"><summary><span>学习足迹</span>' in html
+    assert html.index('id="daily-plan"') < html.index('id="daily-reflection"')
+    assert '<details class="panel progressive-panel" open><summary><span>今天的复盘</span>' in html
+    assert '<details class="panel progressive-panel" open><summary><span>学习足迹</span>' in html
     assert 'id="personal-reflection"' in html
 
 

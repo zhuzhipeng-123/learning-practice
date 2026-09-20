@@ -92,21 +92,41 @@ def resolve_scope(connection, selected_ids, catalog_version, theory_target, prev
         selected_ids = previous.get("selected_ids") if previous.get('selection_explicit', True) else None
     if selected_ids is None:
         selected_ids = [node["id"] for node in catalog["nodes"] if node["parent_id"] is None]
+    lookup_nodes = list(catalog['nodes'])
+    known_lookup = {node['id'] for node in lookup_nodes}
+    lookup_nodes.extend(node for node in previous.get('nodes', []) if node['id'] not in known_lookup)
+    unresolved = set(selected_ids) - {node['id'] for node in lookup_nodes}
+    if unresolved:
+        raise ValueError("已选八股文档已删除或身份不明，请重新选择范围")
+    selected = document_scope_ids(lookup_nodes, selected_ids)
     known = {node["id"] for node in catalog["nodes"]}
-    missing = set(selected_ids) - known
+    missing = set(selected) - known
     if missing and catalog["complete"]:
-        raise ValueError("已选八股模块已删除或身份不明，请重新选择范围")
+        raise ValueError("已选八股文档已删除或身份不明，请重新选择范围")
     if missing:
         old_nodes = {node["id"]: node for node in previous.get("nodes", [])}
         if not missing <= old_nodes.keys():
             raise ValueError("部分目录不可用且无法确认原模块，请保留当前题单并稍后重试")
         catalog["nodes"].extend(old_nodes[item] for item in sorted(missing))
         catalog["question_modules"].update(previous.get("question_modules", {}))
-    selected = _remove_descendants(list(dict.fromkeys(selected_ids)), catalog["nodes"])
     if theory_target > 0 and not selected and (explicit_selection or catalog['nodes']):
-        raise ValueError("八股题量大于 0 时至少选择一个模块")
+        raise ValueError("八股题量大于 0 时至少选择一份文档")
     return {"selected_ids": selected, "selection_explicit": explicit_selection or
             previous.get('selection_explicit', False), **catalog}
+
+
+def document_scope_ids(nodes, selected_ids):
+    """Collapse legacy heading-level choices to their containing source document."""
+    by_id = {node['id']: node for node in nodes}
+    result = []
+    for selected_id in selected_ids or []:
+        node = by_id.get(selected_id)
+        if not node:
+            continue
+        document_id = module_id(node['source_id'], ROOT_ANCHOR)
+        if document_id not in result:
+            result.append(document_id)
+    return result
 
 
 def canonical_quotas(quotas, scope):
@@ -145,12 +165,6 @@ def question_allowed(question_id, source_id, anchor, scope):
 def is_descendant(left, right, scope):
     parents = {node["id"]: node["parent_id"] for node in scope.get("nodes", [])}
     return left != right and _has_ancestor(left, {right}, parents)
-
-
-def _remove_descendants(selected, nodes):
-    parents = {node["id"]: node["parent_id"] for node in nodes}
-    chosen = set(selected)
-    return [item for item in selected if not _has_ancestor(parents.get(item), chosen, parents)]
 
 
 def _has_ancestor(node_id, selected, parents):

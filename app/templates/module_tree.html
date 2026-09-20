@@ -1,8 +1,26 @@
-{% macro tree(nodes, quotas=false, depth=0) %}
+{% macro tree(nodes) %}
 {% for node in nodes %}<details class="module-node" data-module-node="{{ node.id if node.id is defined else node.path }}">
-<summary>{% if quotas %}<input class="module-scope" type="checkbox" aria-label="选择 {{ node.path }}" data-module-id="{{ node.id }}" data-parent-id="{{ node.parent_id or '' }}">{% endif %}<span>{{ node.label }}</span><small>{{ node.total }} 题{% if quotas %} · 可选 {{ node.available }}{% endif %}{% if node.pending %} · {{ node.pending }} 条待整理{% endif %}</small></summary>
-{% if quotas and depth > 0 %}<label class="module-setting">这个范围练 <input class="module-quota" aria-label="{{ node.path }}题数" data-path="{{ node.id }}" type="number" min="0" max="100" value="0"> 题</label>{% endif %}
-{{ tree(node.children.values(), quotas, depth+1) }}
+<summary><span>{{ node.label }}</span><small>{{ node.total }} 题{% if node.pending %} · {{ node.pending }} 条待整理{% endif %}</small></summary>
+{{ tree(node.children.values()) }}
 {% if not node.total and not node.children %}<p class="muted">这个范围暂时没有可抽取的完整题目。</p>{% endif %}
 </details>{% endfor %}
+{% endmacro %}
+
+{% macro document_picker(documents, empty_documents) %}
+<details class="document-picker">
+  <summary><span>选择八股文档</span><small><span id="document-scope-count"></span> · 默认全选，只取消暂时不练的文档</small></summary>
+  <div class="document-picker-actions"><button type="button" id="select-all-documents">全选文档</button></div>
+  <div class="document-grid">
+  {% for node in documents %}<label class="document-option" title="{{ node.full_path }}">
+    <input class="module-scope" type="checkbox" aria-label="选择文档 {{ node.full_path }}" data-module-id="{{ node.id }}" data-parent-id="">
+    <span><strong>{{ node.label }}</strong><small>{{ node.total }} 题 · 当前可抽 {{ node.available }}</small></span>
+  </label>{% endfor %}
+  </div>
+  {% if empty_documents %}<details class="empty-documents"><summary>{{ empty_documents | length }} 份文档暂时没有完整题目</summary>
+    <div class="document-grid document-grid-muted">{% for node in empty_documents %}<label class="document-option" title="{{ node.full_path }}">
+      <input class="module-scope" type="checkbox" aria-label="选择文档 {{ node.full_path }}" data-module-id="{{ node.id }}" data-parent-id="">
+      <span><strong>{{ node.label }}</strong><small>暂时没有可抽取的完整题目</small></span>
+    </label>{% endfor %}</div>
+  </details>{% endif %}
+</details>
 {% endmacro %}

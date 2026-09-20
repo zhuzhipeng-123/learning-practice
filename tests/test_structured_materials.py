@@ -14,6 +14,7 @@ from app.main import app
 from app.parsers.docx import parse_docx_blocks
 from app.services.exports import ExportError, export_learning_data, verify_export
 from app.services.interview import start_session
+from app.services.learning_clock import local_today
 from app.services.local_reparse import _archived_materials
 from app.services.materials import (
     apply_materials,
@@ -230,8 +231,10 @@ def test_nested_table_attachment_inherits_reference_authorization(monkeypatch):
                      {'kind': 'media', 'block_id': 'nested-image'}]}]}}
         database.execute('UPDATE version_resources SET materials_json=? WHERE version_id=?',
                          (json.dumps([table]), version))
+        today = local_today().isoformat()
+        now = datetime.now(UTC).isoformat()
         database.execute("INSERT INTO daily_plan(id,plan_date,timezone,theory_target,created_at) "
-                         "VALUES ('plan','2026-09-20','Asia/Shanghai',1,'now')")
+                         "VALUES ('plan',?,'Asia/Shanghai',1,'now')", (today,))
         database.execute("INSERT INTO task(id,plan_id,question_id,question_version_id,origin,target_kind,status,created_at) "
                          "VALUES ('task','plan',?,?,'daily','base','pending','now')", (question, version))
         media = Path(app.state.database_path).parent / 'media'
@@ -242,9 +245,9 @@ def test_nested_table_attachment_inherits_reference_authorization(monkeypatch):
 
         assert client.get('/api/tasks/task/materials/nested-image', headers=headers).status_code == 403
         assert client.post('/api/tasks/task/attempts', headers=headers,
-                           json={'entry_mode': 'web', 'started_at': '2026-09-20T00:00:00Z'}).status_code == 200
+                           json={'entry_mode': 'web', 'started_at': now}).status_code == 200
         exposed = client.post('/api/tasks/task/expose-answer', headers=headers,
-                              json={'exposed_at': '2026-09-20T00:00:00Z'})
+                              json={'exposed_at': now})
         assert exposed.status_code == 200
         assert client.get('/api/tasks/task/materials/nested-image', headers=headers).status_code == 200
         database.close()

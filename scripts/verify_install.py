@@ -20,6 +20,7 @@ PACKAGED_RESOURCES = {
     "schema": PROJECT_ROOT / "app" / "storage" / "schema.sql",
     "base_template": PROJECT_ROOT / "app" / "templates" / "base.html",
     "stylesheet": PROJECT_ROOT / "app" / "static" / "app.css",
+    "favicon": PROJECT_ROOT / "app" / "static" / "favicon.svg",
 }
 
 

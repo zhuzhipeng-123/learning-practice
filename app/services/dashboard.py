@@ -56,6 +56,18 @@ def module_tree(connection, question_type='theory', preserved_scope=None):
     return list(roots.values())
 
 
+def theory_document_options(connection, preserved_scope=None):
+    """Return one compact daily-scope option per registered theory document."""
+    documents = []
+    for node in _theory_module_tree(connection, preserved_scope):
+        full_path = node['path']
+        label = full_path.rsplit(' > ', 1)[-1]
+        if full_path == label == '八股':
+            label = '八股主页'
+        documents.append({**node, 'label': label, 'full_path': full_path, 'children': {}})
+    return documents
+
+
 def _theory_module_tree(connection, preserved_scope=None):
     from app.services.theory_scope import module_id, theory_catalog
     catalog = theory_catalog(connection)

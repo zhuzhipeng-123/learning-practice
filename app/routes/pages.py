@@ -8,7 +8,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app.services.dashboard import day_details, heatmap, latest_reflections, module_tree
+from app.services.dashboard import (
+    day_details,
+    heatmap,
+    latest_reflections,
+    module_tree,
+    theory_document_options,
+)
 from app.services.free_requests import ORIGINAL_LIMIT, VARIANT_LIMIT
 from app.services.learning_clock import local_now, local_today
 from app.services.llm_config import MODULES, agnes_configured, get_module_config
@@ -35,7 +41,7 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
 
     @router.get("/", response_class=HTMLResponse)
     def today_page(request: Request, database: Database):
-        from app.services.theory_scope import theory_catalog
+        from app.services.theory_scope import document_scope_ids, theory_catalog
         today = local_today()
         plans = database.execute(
             "SELECT p.*, COUNT(t.id) AS assigned, "
@@ -77,6 +83,10 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
         selected_scope = saved_scope.get('selected_ids')
         if selected_scope is None:
             selected_scope = [node['id'] for node in catalog['nodes'] if node['parent_id'] is None]
+        selected_scope = document_scope_ids(
+            [*catalog['nodes'], *saved_scope.get('nodes', [])], selected_scope,
+        )
+        documents = theory_document_options(database, preserved_scope=saved_scope)
         return templates.TemplateResponse(
             request=request,
             name="today.html",
@@ -84,9 +94,9 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
                                  base_tasks=base_tasks,
                                  base_counts=base_counts, base_completed=sum(task['status'] == 'completed' for task in base_tasks),
                                  reflection=latest_reflections(database, today),
-                                 modules=module_tree(database, preserved_scope=saved_scope),
+                                 theory_documents=[node for node in documents if node['total']],
+                                 empty_theory_documents=[node for node in documents if not node['total']],
                                  heatmap=heatmap(database, today, 'daily'), sources=source_status(database),
-                                 allocation=json.loads(preference_plan["allocation_json"]) if preference_plan else {},
                                  theory_scope=selected_scope, theory_catalog_version=catalog['version'],
                                  plan_preferences=preference_plan,
                                  current_plan=current_plan, current_batch=current_batch, batch_visible=batch_visible,

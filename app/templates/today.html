@@ -1,9 +1,13 @@
 {% extends "base.html" %}
 {% block title %}今天 · 学习练习{% endblock %}
-{% from "module_tree.html" import tree %}
+{% from "module_tree.html" import document_picker %}
 {% from "task_rows.html" import rows %}
 {% block content %}
 <div class="page-heading"><div><p class="eyebrow">每天一点，留下积累</p><h2>今天学什么？</h2><p class="muted">{{ today }} · 按自己的节奏，练习、复盘、再进步。</p></div><a class="button-link" href="{{ '#daily-practice' if batch_visible else '#daily-plan' }}">{{ '继续今日练习 ↓' if batch_visible else '安排今日练习 ↓' }}</a></div>
+
+<section class="progressive-sections" aria-label="学习足迹">
+  <details class="panel progressive-panel" open><summary><span>学习足迹</span><small>查看近半年的每日练习记录</small></summary><div class="progressive-content">{% include "heatmap_panel.html" %}</div></details>
+</section>
 
 <section class="panel" id="daily-practice">
 <div class="section-heading"><h3>今天的固定题单</h3><span id="saved-task-count" class="muted" hidden>代码 {{ base_counts.code }} · 八股 {{ base_counts.theory }} · 共 {{ base_tasks | length }} 题</span></div>
@@ -23,7 +27,7 @@
     <label><span>代码</span><input id="code-target" aria-label="代码数量" type="number" min="0" max="100" value="{{ plan_preferences.code_target if plan_preferences else 2 }}"><small>道题</small></label>
     <label><span>八股</span><input id="theory-target" aria-label="八股数量" type="number" min="0" max="100" value="{{ plan_preferences.theory_target if plan_preferences else 3 }}"><small>道题</small></label>
   </div>
-  <div class="module-picker">{{ tree(modules, true) }}</div>
+  {{ document_picker(theory_documents, empty_theory_documents) }}
   <p class="muted" id="quota-summary"></p>
   <button class="primary" id="create-plan" data-date="{{ today }}" data-plan-id="{{ current_plan.id if current_plan else '' }}" data-batch-key="{{ current_batch.batch_key if current_batch else '' }}" data-catalog-version="{{ theory_catalog_version }}">{{ '替换今天的题单' if batch_visible else '重新安排今日题单' if legacy_batch else '确认今日题单' }}</button>
   <p class="muted">当天题单固定；新一天会预填上次确认的偏好，但需要再次确认才出题。只有主动点击替换才会放弃当前未完成的题；已提交的记录始终保留。</p>
@@ -38,12 +42,10 @@
 
 <p class="muted">跨天后未完成的旧题退出当天题单；长期复习请去<a href="/review">复习库</a>。</p>
 
-<section class="progressive-sections" aria-label="复盘与学习足迹">
-  <details class="panel progressive-panel"><summary><span>今天的复盘</span><small>写下卡点，或让模型整理今天的练习</small></summary><div class="progressive-content">{% include "reflection_panel.html" %}</div></details>
-  <details class="panel progressive-panel"><summary><span>学习足迹</span><small>查看近半年的每日练习记录</small></summary><div class="progressive-content">{% include "heatmap_panel.html" %}</div></details>
+<section class="progressive-sections" aria-label="今日复盘">
+  <details class="panel progressive-panel" open><summary><span>今天的复盘</span><small>写下卡点，或让模型整理今天的练习</small></summary><div class="progressive-content">{% include "reflection_panel.html" %}</div></details>
 </section>
 
-<script id="saved-allocation" type="application/json">{{ allocation | tojson }}</script>
 <script id="saved-theory-scope" type="application/json">{{ theory_scope | tojson }}</script>
 <script src="{{ asset_url('today.js') }}"></script>
 {% endblock %}

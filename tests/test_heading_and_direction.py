@@ -112,8 +112,8 @@ def test_home_does_not_restore_saved_base_extra_or_older_tasks(monkeypatch):
             add_tasks(db, plan['plan_id'], [r[0] for r in selected], 'free_practice', 'extra')
             db.commit()
             html = client.get('/').text
+            assert html.index('heatmap-panel') < html.index('id="code-target"')
             assert html.index('id="code-target"') < html.index('id="daily-reflection"')
-            assert html.index('id="code-target"') < html.index('heatmap-panel')
             base = html.split('id="daily-task-list"')[1].split('id="older-practice"')[0]
             assert base.count('class="task-row"') == 0
             assert all(t['id'] not in html for t in plan['tasks'])
