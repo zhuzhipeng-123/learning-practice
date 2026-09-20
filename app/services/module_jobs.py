@@ -81,11 +81,16 @@ def reflection_context(connection, day):
     if not timeline['activity_units']:
         raise ModelJobError("当天没有可用于反思的学习记录")
     adopted = {item['attempt_id']: item['verdict'] for item in evaluations}
-    wrong = [item for item in timeline['attempts'] if item['code_self_result'] == 'cannot_solve' or adopted.get(item['id']) == 'needs_review']
+    wrong = [item for item in timeline['attempts'] if item['explicit_unable'] or
+             item['code_self_result'] == 'cannot_solve' or adopted.get(item['id']) == 'needs_review']
     for item in timeline['attempts']:
-        item['assessment_status'] = ('自评会做' if item['code_self_result'] == 'can_solve' else '自评不会，已知薄弱点') if item['code_self_result'] else {
+        level = {'unknown': '完全不清楚', 'vague': '模糊', 'partial': '一般'}.get(item['mastery_level'])
+        if item['explicit_unable']:
+            item['assessment_status'] = f'明确不会，掌握程度：{level}'
+        else:
+            item['assessment_status'] = ('自评会做' if item['code_self_result'] == 'can_solve' else '自评不会，已知薄弱点') if item['code_self_result'] else {
             'aligned':'已采用通过', 'needs_review':'已采用需复习', 'unable_to_assess':'依据不足',
-        }.get(adopted.get(item['id']), '待评价')
+            }.get(adopted.get(item['id']), '待评价')
         item['code_self_result'] = {'can_solve': '会', 'cannot_solve': '不会'}.get(item['code_self_result'])
     return {"activity_date": day.isoformat(), "activity_units": timeline["activity_units"], "records": records, 'wrong_answers': wrong,
             'unanswered_question_ids': unanswered_questions(turns),

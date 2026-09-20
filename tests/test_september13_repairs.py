@@ -18,7 +18,7 @@ from app.services.interview_review import preview_review
 from app.services.interview_setup import prepare_pool_interview
 from app.services.knowledge_editing import edit_knowledge
 from app.services.learning_clock import local_today
-from app.services.practice import start_attempt, submit_code, submit_theory
+from app.services.practice import PracticeError, start_attempt, submit_code, submit_theory
 from app.services.review import enter_review, get_active_round
 from app.services.review_tasks import start_review_task
 from app.services.tasks import IdempotencyConflictError, create_daily_plan
@@ -46,14 +46,19 @@ def test_old_code_cannot_solve_preserves_newer_review_basis(database, interview)
     edit_knowledge(database, question, version, 'Find two distinct maximum values',
                    'Track the two largest distinct values.', 'Arrays', True, 'edit')
     newer = dict(get_active_round(database, question))
-    result = (assess_code(database, session, 'cannot_solve', '', 'answer') if interview else
-              submit_code(database, Submission(task, 'answer', now, 'review', code_self_result='cannot_solve')))
+    if not interview:
+        with pytest.raises(PracticeError, match='复习依据'):
+            submit_code(database, Submission(task, 'answer', now, 'review', code_self_result='cannot_solve'))
+        assert dict(get_active_round(database, question)) == newer
+        attempt = database.execute('SELECT * FROM attempt WHERE task_id=?', (task,)).fetchone()
+        assert attempt['submitted_at'] is None
+        assert attempt['review_round_id'] == old_round
+        return
+    result = assess_code(database, session, 'cannot_solve', '', 'answer')
     assert result['review_basis_conflict'] is True
     assert dict(get_active_round(database, question)) == newer
     attempt = database.execute('SELECT * FROM attempt WHERE id=?', (result['attempt_id'],)).fetchone()
     assert attempt['submitted_at'] and attempt['question_version_id'] == version
-    if not interview:
-        assert attempt['review_round_id'] == old_round
 
 
 def test_manual_assessment_http_replay_preserves_later_adoption(monkeypatch):
@@ -124,15 +129,16 @@ def test_confirmed_daily_and_free_batches_restore_once_per_day(database, monkeyp
         retire_expired(database)
         daily = restore_daily(database)
         free = restore_free(database)['code']['batch']
-        assert daily['batch_key'] == 'daily-auto:' + day.isoformat()
+        assert daily is None
         assert restore_free(database)['theory']['batch'] is None
         run_batch(location, free['id'])
         assert all(database.execute('SELECT status FROM task WHERE id=?', (t,)).fetchone()[0] == 'cancelled' for t in old_ids)
         assert database.execute('SELECT COUNT(*) FROM model_job').fetchone()[0] == 0
+        daily = draw_daily_batch(database, day, 1, 1, {}, f'confirmed-{offset}', '')
         assert database.execute('SELECT COUNT(*) FROM daily_plan').fetchone()[0] == offset + 1
 
 
-def test_concurrent_first_daily_open_draws_once(database, monkeypatch):
+def test_concurrent_first_daily_open_does_not_draw(database, monkeypatch):
     day = local_today()
     monkeypatch.setattr('app.services.current_practice.local_today', lambda: day)
     pool(database, 10, 'code')
@@ -145,7 +151,8 @@ def test_concurrent_first_daily_open_draws_once(database, monkeypatch):
             return restore_daily(db)
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: restore(), range(2)))
-    assert results[0] == results[1]
+    assert results == [None, None]
+    assert database.execute("SELECT COUNT(*) FROM daily_plan").fetchone()[0] == 1
     assert database.execute("SELECT COUNT(*) FROM task WHERE status='pending'").fetchone()[0] == 2
 
 

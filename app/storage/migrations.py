@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.storage.transactions import transaction
 
-CURRENT_VERSION = 12
+CURRENT_VERSION = 15
 MIGRATION_2 = [
     ("CREATE TABLE answer_exposure (attempt_id TEXT NOT NULL REFERENCES attempt(id),"
      "happened_at TEXT NOT NULL, PRIMARY KEY(attempt_id,happened_at))"),
@@ -93,6 +93,28 @@ MIGRATION_12 = [
      "FROM reference_correction"),
 ]
 
+MIGRATION_13 = [
+    ("CREATE TABLE alignment_request(request_key TEXT PRIMARY KEY,payload_hash TEXT NOT NULL,"
+     "payload_json TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)"),
+    ("CREATE TABLE alignment_request_run(request_key TEXT NOT NULL REFERENCES alignment_request(request_key),"
+     "source_id TEXT NOT NULL REFERENCES source(id),run_id TEXT NOT NULL REFERENCES alignment_run(id),"
+     "reused INTEGER NOT NULL DEFAULT 0 CHECK(reused IN (0,1)),PRIMARY KEY(request_key,source_id))"),
+    "CREATE INDEX alignment_request_run_id ON alignment_request_run(run_id)",
+]
+
+MIGRATION_14 = [
+    ("CREATE TABLE mastery_assessment(id TEXT PRIMARY KEY,question_id TEXT NOT NULL REFERENCES question(id),"
+     "review_basis_id TEXT NOT NULL REFERENCES review_basis(id),attempt_id TEXT REFERENCES attempt(id),"
+     "level TEXT NOT NULL CHECK(level IN ('unknown','vague','partial')),request_key TEXT NOT NULL UNIQUE,"
+     "created_at TEXT NOT NULL)"),
+    "CREATE INDEX mastery_assessment_current ON mastery_assessment(question_id,review_basis_id,created_at)",
+    "CREATE INDEX mastery_assessment_attempt ON mastery_assessment(attempt_id)",
+]
+
+MIGRATION_15 = [
+    "ALTER TABLE daily_plan ADD COLUMN theory_scope_json TEXT NOT NULL DEFAULT '{}'",
+]
+
 
 def migrate(connection, backup=True):
     version = connection.execute("SELECT COALESCE(MAX(version),0) FROM schema_version").fetchone()[0]
@@ -106,7 +128,7 @@ def migrate(connection, backup=True):
         with closing(sqlite3.connect(backup_path)) as destination:
             connection.backup(destination)
     with transaction(connection):
-        for target, statements in ((2, MIGRATION_2), (3, MIGRATION_3), (4, MIGRATION_4), (5, MIGRATION_5), (6, MIGRATION_6), (7, MIGRATION_7), (8, MIGRATION_8), (9, MIGRATION_9), (10, MIGRATION_10), (11, MIGRATION_11), (12, MIGRATION_12)):
+        for target, statements in ((2, MIGRATION_2), (3, MIGRATION_3), (4, MIGRATION_4), (5, MIGRATION_5), (6, MIGRATION_6), (7, MIGRATION_7), (8, MIGRATION_8), (9, MIGRATION_9), (10, MIGRATION_10), (11, MIGRATION_11), (12, MIGRATION_12), (13, MIGRATION_13), (14, MIGRATION_14), (15, MIGRATION_15)):
             if version < target:
                 for statement in statements:
                     connection.execute(statement)

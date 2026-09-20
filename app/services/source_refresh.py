@@ -11,7 +11,9 @@ from app.services.model_jobs import ModelJobError
 from app.services.model_json import parse_model_json
 from app.services.module_jobs import run_module_job
 from app.services.source_coverage import parsing_batches, validate_suggestions
+from app.services.tasks import IdempotencyConflictError, _payload_hash
 from app.storage.database import connect_database
+from app.storage.ids import new_id
 from app.storage.transactions import transaction
 
 _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="source-refresh")
@@ -22,10 +24,12 @@ REFRESH_COOLDOWN = timedelta(minutes=10)
 
 def source_status(connection):
     location = connection.execute("PRAGMA database_list").fetchone()[2]
+    _mark_orphaned_runs(connection, location)
     rows = [dict(row) for row in connection.execute(
         "SELECT s.id,s.question_type,s.last_check_at,s.last_check_success_at,s.last_complete_sync_at,s.last_error,"
         "COALESCE((SELECT summary_json FROM alignment_run WHERE source_id=s.id ORDER BY rowid DESC LIMIT 1),"
         "(SELECT summary_json FROM sync_run WHERE source_id=s.id ORDER BY rowid DESC LIMIT 1)) AS summary_json,"
+        "(SELECT id FROM alignment_run WHERE source_id=s.id ORDER BY rowid DESC LIMIT 1) AS alignment_run_id,"
         "COALESCE((SELECT status FROM alignment_run WHERE source_id=s.id ORDER BY rowid DESC LIMIT 1),"
         "(SELECT status FROM sync_run WHERE source_id=s.id ORDER BY rowid DESC LIMIT 1)) AS sync_status,"
         "(SELECT COUNT(*) FROM parser_candidate WHERE source_id=s.id AND status='pending') AS pending "
@@ -35,11 +39,12 @@ def source_status(connection):
             row['member_source_ids'] = [row['id'], *[item[0] for item in connection.execute(
                 'SELECT DISTINCT source_id FROM source_tree_member WHERE root_source_id=? AND source_id IS NOT NULL', (row['id'],))]]
             job = _jobs.get((location, row['id']))
-            row['running'] = bool(job and not job.done())
+            row['running'] = row['sync_status'] in {'queued', 'running'} and bool(job and not job.done())
+            row['recoverable'] = row['sync_status'] == 'recoverable'
     return rows
 
 
-def queue_source_refresh(connection, source_id=None, force=False, change_note=''):
+def queue_source_refresh(connection, source_id=None, force=False, change_note='', request_key=None):
     if source_id:
         parent = connection.execute('SELECT root_source_id FROM source_tree_member WHERE source_id=? AND root_source_id!=? LIMIT 1', (source_id, source_id)).fetchone()
         source_id = parent[0] if parent else source_id
@@ -48,33 +53,117 @@ def queue_source_refresh(connection, source_id=None, force=False, change_note=''
     sources = source_status(connection)
     if source_id and not any(source["id"] == source_id for source in sources):
         raise ValueError("没有找到启用的题源")
-    queued = []
+    selected = []
     for source in sources:
-        if source_id and source["id"] != source_id:
+        if source_id and source['id'] != source_id:
             continue
-        checked = datetime.fromisoformat(source["last_check_at"]) if source["last_check_at"] else None
-        key = (location, source["id"])
-        with _lock:
-            existing = _jobs.get(key)
-            if existing and not existing.done():
-                queued.append(source["id"])
-                continue
-            if not force and checked and now - checked < REFRESH_COOLDOWN:
-                continue
-            _jobs[key] = _pool.submit(_refresh, *key, change_note) if change_note else _pool.submit(_refresh, *key)
-            queued.append(source["id"])
-    return {"used_cache": True, "refreshing": queued, "sources": sources}
+        checked = datetime.fromisoformat(source['last_check_at']) if source['last_check_at'] else None
+        if force or not checked or now - checked >= REFRESH_COOLDOWN:
+            selected.append(source)
+    if not request_key:
+        request_key = new_id('alignment-request')
+    if len(request_key) > 200:
+        raise ValueError('请求标识过长')
+    payload = {'source_id': source_id, 'force': bool(force), 'change_note': change_note}
+    created = []
+    with transaction(connection):
+        prior = connection.execute('SELECT payload_hash FROM alignment_request WHERE request_key=?',
+                                   (request_key,)).fetchone()
+        if prior and prior['payload_hash'] != _payload_hash(payload):
+            raise IdempotencyConflictError('request key was reused with different input')
+        if not prior:
+            stamp = now.isoformat()
+            connection.execute('INSERT INTO alignment_request VALUES (?,?,?,?,?,?)',
+                               (request_key, _payload_hash(payload), json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                                'accepted', stamp, stamp))
+            for source in selected:
+                active = connection.execute(
+                    "SELECT id,status,summary_json FROM alignment_run WHERE source_id=? "
+                    "AND status IN ('queued','running','recoverable') ORDER BY rowid DESC LIMIT 1",
+                    (source['id'],),
+                ).fetchone()
+                if active:
+                    run_id, reused = active['id'], 1
+                    if active['status'] == 'recoverable':
+                        frozen_note = json.loads(active['summary_json'] or '{}').get('change_note', '')
+                        created.append((source['id'], run_id, frozen_note))
+                else:
+                    from app.services.wiki_alignment import initial_alignment_summary
+                    run_id, reused = new_id('alignment'), 0
+                    summary = initial_alignment_summary(change_note)
+                    connection.execute("INSERT INTO alignment_run(id,source_id,started_at,status,summary_json) "
+                                       "VALUES (?,?,?,'queued',?)",
+                                       (run_id, source['id'], stamp, json.dumps(summary, ensure_ascii=False)))
+                    created.append((source['id'], run_id, change_note))
+                connection.execute('INSERT INTO alignment_request_run VALUES (?,?,?,?)',
+                                   (request_key, source['id'], run_id, reused))
+        else:
+            for row in connection.execute(
+                "SELECT a.source_id,a.run_id,r.summary_json FROM alignment_request_run a "
+                "JOIN alignment_run r ON r.id=a.run_id WHERE a.request_key=? AND r.status='recoverable'",
+                (request_key,),
+            ):
+                note = json.loads(row['summary_json'] or '{}').get('change_note', '')
+                created.append((row['source_id'], row['run_id'], note))
+    for queued_source, run_id, frozen_note in created:
+        _schedule_run(location, queued_source, run_id, frozen_note)
+    return alignment_request_status(connection, request_key, sources=sources)
 
 
-def _refresh(location, source_id, change_note=''):
+def _schedule_run(location, source_id, run_id, change_note):
+    key = (location, source_id)
+    with _lock:
+        existing = _jobs.get(key)
+        if existing and not existing.done():
+            return
+        _jobs[key] = _pool.submit(_refresh, location, source_id, run_id, change_note)
+
+
+def _refresh(location, source_id, run_id, change_note=''):
     connection = connect_database(location)
     try:
         from app.services.wiki_alignment import align_source_tree
-        align_source_tree(connection, source_id, analyze_alignment, change_note=change_note)
-    except Exception:
+        align_source_tree(connection, source_id, analyze_alignment, change_note=change_note, run_id=run_id)
+    except Exception as error:
         logging.getLogger(__name__).exception("Source refresh failed: %s", source_id)
+        with transaction(connection):
+            connection.execute("UPDATE alignment_run SET status='failed',finished_at=?,error=? WHERE id=?",
+                               (datetime.now(UTC).isoformat(), str(error), run_id))
     finally:
         connection.close()
+
+
+def alignment_request_status(connection, request_key, sources=None):
+    if sources is None:
+        location = connection.execute("PRAGMA database_list").fetchone()[2]
+        _mark_orphaned_runs(connection, location)
+    request = connection.execute('SELECT * FROM alignment_request WHERE request_key=?', (request_key,)).fetchone()
+    if not request:
+        raise ValueError('没有找到这次对齐请求')
+    rows = [dict(row) for row in connection.execute(
+        "SELECT a.source_id,a.run_id,a.reused,r.status,r.summary_json,r.error FROM alignment_request_run a "
+        "JOIN alignment_run r ON r.id=a.run_id WHERE a.request_key=? ORDER BY a.source_id", (request_key,))]
+    terminal = all(row['status'] in {'complete', 'partial', 'failed'} for row in rows)
+    status = 'complete' if terminal else 'recoverable' if any(row['status'] == 'recoverable' for row in rows) else 'running'
+    with transaction(connection):
+        connection.execute('UPDATE alignment_request SET status=?,updated_at=? WHERE request_key=?',
+                           (status, datetime.now(UTC).isoformat(), request_key))
+    return {'request_key': request_key, 'status': status, 'terminal': terminal, 'runs': rows,
+            'used_cache': True,
+            'refreshing': [row['source_id'] for row in rows if row['status'] not in {'complete', 'partial', 'failed'}],
+            'sources': sources if sources is not None else source_status(connection)}
+
+
+def _mark_orphaned_runs(connection, location):
+    with _lock:
+        active_sources = {source_id for (path, source_id), job in _jobs.items()
+                          if path == location and not job.done()}
+    candidates = connection.execute("SELECT id,source_id FROM alignment_run WHERE status IN ('queued','running')").fetchall()
+    orphaned = [row['id'] for row in candidates if row['source_id'] not in active_sources]
+    if not orphaned:
+        return
+    with transaction(connection):
+        connection.executemany("UPDATE alignment_run SET status='recoverable' WHERE id=?", ((run_id,) for run_id in orphaned))
 
 
 def analyze_alignment(connection, source_id, result, client=None):

@@ -15,8 +15,8 @@ class SheetSource:
         self.revision = 1
         self.sheet_reads = 0
         self.blocks = [
-            {'block_id': 'question', 'block_type': 3,
-             'heading1': {'elements': [{'text_run': {'content': 'Find the maximum value'}}]}},
+            {'block_id': 'question', 'block_type': 5,
+             'heading3': {'elements': [{'text_run': {'content': 'Find the maximum value-图片'}}]}},
             {'block_id': 'prompt-image', 'block_type': 27,
              'image': {'token': 'synthetic-image', 'alt': 'Find the largest value; return zero for empty input.'}},
             {'block_id': 'answer-sheet', 'block_type': 30, 'sheet': {'token': 'synthetic-sheet_sheetA'}},
@@ -65,6 +65,8 @@ def test_code_sheet_reference_is_read_archived_and_versioned(database, mixed):
     resources = json.loads(database.execute('SELECT materials_json FROM version_resources WHERE version_id=?', (first['id'],)).fetchone()[0])
     sheet = next(item for item in resources if item['kind'] == 'sheet')
     assert sheet['role'] == 'reference' and sheet['status'] == 'complete'
+    assert sheet['structure'] == {'schema': 'grid-v1', 'rows': 2, 'columns': 2,
+                                  'cells': [['input', 'result'], ['empty', 'zero']]}
     location = Path(database.execute('PRAGMA database_list').fetchone()[2]).parent
     assert (location / 'media' / sheet['path']).read_text(encoding='utf-8') == source.csv
     source.csv = 'input,result\nempty,None'

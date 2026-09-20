@@ -35,6 +35,7 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
 
     @router.get("/", response_class=HTMLResponse)
     def today_page(request: Request, database: Database):
+        from app.services.theory_scope import theory_catalog
         today = local_today()
         plans = database.execute(
             "SELECT p.*, COUNT(t.id) AS assigned, "
@@ -53,12 +54,29 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
         ).fetchall()
         current_plan = next((dict(plan) for plan in plans if plan['plan_date'] == today.isoformat()), None)
         plan_id = current_plan['id'] if current_plan else None
-        from app.services.current_practice import current_daily_batch
+        from app.services.current_practice import current_daily_batch, legacy_daily_batch
         current_batch = current_daily_batch(database, plan_id) if plan_id else None
+        legacy_batch = legacy_daily_batch(database, plan_id) if plan_id else None
+        preference_plan = current_plan
+        if preference_plan is None:
+            saved = database.execute(
+                "SELECT p.* FROM idempotency_record r JOIN daily_plan p "
+                "ON p.id=json_extract(r.result_json,'$.plan_id') "
+                "WHERE r.operation='daily_batch' "
+                "AND json_extract(r.result_json,'$.batch_key') NOT LIKE 'daily-auto:%' "
+                "ORDER BY p.plan_date DESC,r.rowid DESC LIMIT 1"
+            ).fetchone()
+            preference_plan = dict(saved) if saved else None
         batch_visible = bool(current_batch)
+        legacy_tasks = [task for task in tasks if task['id'] in legacy_batch['task_ids']] if legacy_batch else []
         tasks = [task for task in tasks if task['id'] in current_batch['task_ids']] if batch_visible else []
         base_tasks = tasks
         base_counts = {kind: sum(task['question_type'] == kind for task in base_tasks) for kind in ('code', 'theory')}
+        catalog = theory_catalog(database)
+        saved_scope = json.loads(preference_plan['theory_scope_json'] or '{}') if preference_plan else {}
+        selected_scope = saved_scope.get('selected_ids')
+        if selected_scope is None:
+            selected_scope = [node['id'] for node in catalog['nodes'] if node['parent_id'] is None]
         return templates.TemplateResponse(
             request=request,
             name="today.html",
@@ -66,9 +84,13 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
                                  base_tasks=base_tasks,
                                  base_counts=base_counts, base_completed=sum(task['status'] == 'completed' for task in base_tasks),
                                  reflection=latest_reflections(database, today),
-                                 modules=module_tree(database), heatmap=heatmap(database, today, 'daily'), sources=source_status(database),
-                                 allocation=next((json.loads(plan["allocation_json"]) for plan in plans if plan["plan_date"] == today.isoformat()), {}),
-                                 current_plan=current_plan, current_batch=current_batch, batch_visible=batch_visible),
+                                 modules=module_tree(database, preserved_scope=saved_scope),
+                                 heatmap=heatmap(database, today, 'daily'), sources=source_status(database),
+                                 allocation=json.loads(preference_plan["allocation_json"]) if preference_plan else {},
+                                 theory_scope=selected_scope, theory_catalog_version=catalog['version'],
+                                 plan_preferences=preference_plan,
+                                 current_plan=current_plan, current_batch=current_batch, batch_visible=batch_visible,
+                                 legacy_batch=legacy_batch, legacy_tasks=legacy_tasks),
         )
 
     @router.get("/days/{day}", response_class=HTMLResponse)
@@ -79,7 +101,8 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
     def practice_page(task_id: str, request: Request, database: Database):
         from app.services.reference_state import verification
         task = database.execute(
-            "SELECT t.*, q.question_type,q.is_classic, q.current_version_id, v.prompt, v.reference_text, v.material_status, v.category_path "
+            "SELECT t.*, q.question_type,q.is_classic, q.current_version_id, v.prompt, v.reference_text, "
+            "v.material_status, v.category_path,v.review_basis_id "
             "FROM task t JOIN question q ON q.id=t.question_id "
             "JOIN question_version v ON v.id=t.question_version_id WHERE t.id=?",
             (task_id,),
@@ -101,6 +124,11 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
                 review_basis_conflict=bool(database.execute('SELECT 1 FROM review_round r JOIN question_version v ON v.id=? '
                     "WHERE r.question_id=? AND r.status='active' AND r.review_basis_id!=v.review_basis_id",
                     (task['question_version_id'], task['question_id'])).fetchone()),
+                mastery=database.execute('SELECT id,level FROM mastery_assessment WHERE question_id=? '
+                    'AND review_basis_id=? ORDER BY rowid DESC LIMIT 1',
+                    (task['question_id'], task['review_basis_id'])).fetchone(),
+                explicit_unable=bool(latest and database.execute(
+                    'SELECT 1 FROM mastery_assessment WHERE attempt_id=?', (latest['id'],)).fetchone()),
                 has_correction=bool(database.execute('SELECT 1 FROM reference_correction WHERE version_id=?', (task['question_version_id'],)).fetchone()),
                 reference_verification=verification(database, task['question_version_id']),
                 next_task=database.execute("SELECT t.id,(SELECT s.id FROM interview_session s WHERE s.task_id=t.id ORDER BY s.rowid DESC LIMIT 1) session_id "
@@ -188,10 +216,15 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
         )
 
     @router.get("/review", response_class=HTMLResponse)
-    def review_page(request: Request, database: Database):
+    def review_page(request: Request, database: Database,
+                    mastery: Literal['all', 'unknown', 'vague', 'partial', 'ungraded'] = 'all'):
         rounds = database.execute(
-            "SELECT r.*, q.question_type, v.prompt, v.category_path, COUNT(p.id) AS valid_pass_count, "
-            "MIN(p.submitted_at) AS first_pass_at, MAX(p.submitted_at) AS last_pass_at "
+            "SELECT r.*, q.question_type, v.id AS question_version_id, v.prompt, v.category_path, COUNT(p.id) AS valid_pass_count, "
+            "MIN(p.submitted_at) AS first_pass_at, MAX(p.submitted_at) AS last_pass_at,"
+            "(SELECT m.id FROM mastery_assessment m WHERE m.question_id=r.question_id "
+            "AND m.review_basis_id=r.review_basis_id ORDER BY m.rowid DESC LIMIT 1) AS mastery_id,"
+            "(SELECT m.level FROM mastery_assessment m WHERE m.question_id=r.question_id "
+            "AND m.review_basis_id=r.review_basis_id ORDER BY m.rowid DESC LIMIT 1) AS mastery_level "
             "FROM review_round r JOIN question q ON q.id=r.question_id "
             "JOIN question_version v ON v.id=(SELECT v2.id FROM question_version v2 "
             "WHERE v2.question_id=q.id AND v2.review_basis_id=r.review_basis_id ORDER BY v2.rowid DESC LIMIT 1) "
@@ -199,6 +232,10 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
             "GROUP BY r.id ORDER BY CASE WHEN r.status='active' THEN 0 ELSE 1 END,r.started_at DESC"
         ).fetchall()
         rounds = [dict(row) for row in rounds]
+        if mastery != 'all':
+            rounds = [item for item in rounds if (item['mastery_level'] or 'ungraded') == mastery]
+        level_order = {'unknown': 0, 'vague': 1, 'partial': 2, None: 3}
+        rounds.sort(key=lambda item: (item['status'] != 'active', level_order[item['mastery_level']], item['started_at']))
         now = local_now()
         for item in rounds:
             item['span_days'] = round((datetime.fromisoformat(item['last_pass_at']) - datetime.fromisoformat(item['first_pass_at'])).total_seconds() / 86400, 2) if item['first_pass_at'] else 0
@@ -211,7 +248,7 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
         return templates.TemplateResponse(
             request=request,
             name="review.html",
-            context=page_context(request, rounds=rounds),
+            context=page_context(request, rounds=rounds, mastery_filter=mastery),
         )
 
     @router.get('/questions/{question_id}/history', response_class=HTMLResponse)

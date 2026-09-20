@@ -1,5 +1,13 @@
 (() => {
 const active = batch => batch && ['queued', 'running'].includes(batch.status);
+function promiseCopy(batch, resultBatch) {
+  const currentTasks = (resultBatch?.result?.tasks || []).filter(task => task.status !== 'cancelled');
+  if (currentTasks.length) return ['今天接着练', '题单保存在本机，修改下次设置不会换掉当前题目。'];
+  if (active(batch)) return ['正在准备这批题', '可以先练另一栏；完成后会自动显示题目。'];
+  if (resultBatch) return ['这次没有可用新题', '调整范围或更新题库后，再主动确认一批。'];
+  if (batch) return ['这次没有成功出题', '按原设置重试，或修改设置后重新确认。'];
+  return ['先确认今天的题单', '选好范围和数量，点击确认出题后，当天关闭再打开仍是同一批。'];
+}
 function cards(container, tasks, cancellable=false) {
   container.replaceChildren(...tasks.map(task => {
     const card = document.createElement('div'), content = document.createElement('div');
@@ -55,10 +63,9 @@ function bindPanel(panel) {
   }
   function render() {
     const batch = state.batch;
-    find('.batch-promise-label').textContent = batch ? '今天接着练' : '先确认今天的题单';
-    find('.batch-promise small').textContent = batch
-      ? '题单保存在本机，修改下次设置不会换掉当前题目。'
-      : '选好范围和数量，点击确认出题后，当天关闭再打开仍是同一批。';
+    const copy = promiseCopy(batch, state.result_batch);
+    find('.batch-promise-label').textContent = copy[0];
+    find('.batch-promise small').textContent = copy[1];
     recovery.replaceChildren();
     if (active(batch)) {
       const description = batch.spec.mode === 'topic' ? `，范围：${batch.spec.theme}` : '，随机范围';
@@ -77,7 +84,9 @@ function bindPanel(panel) {
       find('.free-current').hidden = false;
       const remaining = state.result_batch.result.tasks.filter(task => task.status !== 'cancelled');
       const completed = remaining.filter(task => task.status === 'completed').length;
-      find('.free-current h4').textContent = `今天的${label}题 · ${completed} / ${remaining.length} 已完成`;
+      find('.free-current h4').textContent = remaining.length
+        ? `今天的${label}题 · ${completed} / ${remaining.length} 已完成`
+        : '这次没有可用新题';
       cards(find('.free-result'), remaining);
       if (!remaining.length) find('.free-result').textContent = state.result_batch.result.added ? '这批练习已处理完，可以再抽一批；需巩固的题请加入复习库。' : '本次没有可用的新题，旧待办已作废。请调整范围或更新题库后再试。';
     } else { find('.free-result').replaceChildren(); if (!batch) output.textContent = '今天还没有确认题单，选择范围并确认出题后开始。'; }

@@ -8,7 +8,9 @@ from app.services.wiki_sources import source_prefix
 HEATMAP_DAYS = 182
 
 
-def module_tree(connection, question_type='theory'):
+def module_tree(connection, question_type='theory', preserved_scope=None):
+    if question_type == 'theory':
+        return _theory_module_tree(connection, preserved_scope)
     roots = {}
 
     def add(path, field=None, count=0):
@@ -52,6 +54,41 @@ def module_tree(connection, question_type='theory'):
                                   "WHERE c.status='pending' AND s.question_type=? AND s.enabled=1", (question_type,)):
         add(json.loads(row[0])["category_path"], "pending", 1)
     return list(roots.values())
+
+
+def _theory_module_tree(connection, preserved_scope=None):
+    from app.services.theory_scope import module_id, theory_catalog
+    catalog = theory_catalog(connection)
+    items = list(catalog['nodes'])
+    known = {item['id'] for item in items}
+    if preserved_scope and not catalog['complete']:
+        items.extend({**item, 'label': item['label'] + '（目录暂不完整）', 'stale': True}
+                     for item in preserved_scope.get('nodes', []) if item['id'] not in known)
+    nodes = {item['id']: {**item, 'total': 0, 'available': 0, 'pending': 0, 'children': {}}
+             for item in items}
+    for node in nodes.values():
+        parent = nodes.get(node['parent_id'])
+        if parent:
+            parent['children'][node['id']] = node
+    rows = connection.execute(
+        "SELECT q.id,q.source_status,v.material_status,b.source_id,b.main_anchor_block_id,"
+        "EXISTS(SELECT 1 FROM task t WHERE t.question_id=q.id AND t.status IN ('pending','in_progress')) busy "
+        "FROM question q JOIN question_version v ON v.id=q.current_version_id "
+        "JOIN source_binding b ON b.question_id=q.id AND b.active=1 "
+        "WHERE q.question_type='theory' AND q.source_kind='feishu'"
+    ).fetchall()
+    parents = {item['id']: item['parent_id'] for item in catalog['nodes']}
+    for row in rows:
+        question_key = module_id(row['source_id'], row['main_anchor_block_id'])
+        node_id = catalog['question_modules'].get(question_key)
+        while node_id:
+            node = nodes.get(node_id)
+            if node:
+                node['total'] += int(row['source_status'] == 'active')
+                node['available'] += int(row['source_status'] == 'active' and not row['busy'] and
+                                         row['material_status'] in {'complete', 'verified', 'text_complete'})
+            node_id = parents.get(node_id)
+    return [node for node in nodes.values() if node['parent_id'] is None]
 
 
 def latest_reflections(connection, day):
@@ -109,7 +146,10 @@ def heatmap(connection, today, scope='all'):
 def day_details(connection, day: date, scope='all'):
     value = day.isoformat()
     attempts = [dict(row) for row in connection.execute(
-        "SELECT a.id,a.task_id,a.submitted_at,a.code_self_result,t.origin,q.question_type,v.prompt,v.category_path,e.verdict FROM attempt a "
+        "SELECT a.id,a.task_id,a.submitted_at,a.code_self_result,t.origin,q.question_type,v.prompt,v.category_path,e.verdict,"
+        "EXISTS(SELECT 1 FROM mastery_assessment ma WHERE ma.attempt_id=a.id) AS explicit_unable,"
+        "(SELECT ma.level FROM mastery_assessment ma WHERE ma.question_id=t.question_id "
+        "AND ma.review_basis_id=v.review_basis_id ORDER BY ma.rowid DESC LIMIT 1) AS mastery_level FROM attempt a "
         "JOIN task t ON t.id=a.task_id JOIN question q ON q.id=t.question_id JOIN question_version v ON v.id=a.question_version_id "
         "LEFT JOIN evaluation e ON e.attempt_id=a.id AND e.adopted=1 WHERE a.activity_date=? AND a.submitted_at IS NOT NULL "
         "AND (?='all' OR t.origin=?) ORDER BY a.submitted_at", (value, scope, scope))]
@@ -137,8 +177,10 @@ def day_details(connection, day: date, scope='all'):
         if interview['task_id'] not in latest:
             groups['pending'].append({**interview, 'session_id': interview['id'], 'verdict': None})
     for attempt in latest.values():
-        outcome = attempt['code_self_result'] if attempt['question_type'] == 'code' else attempt['verdict']
-        key = {'can_solve': 'can', 'cannot_solve': 'cannot', 'aligned': 'can', 'needs_review': 'cannot', 'unable_to_assess': 'unknown'}.get(outcome, 'pending')
+        outcome = 'explicit_unable' if attempt['explicit_unable'] else (
+            attempt['code_self_result'] if attempt['question_type'] == 'code' else attempt['verdict'])
+        key = {'can_solve': 'can', 'cannot_solve': 'cannot', 'explicit_unable': 'cannot',
+               'aligned': 'can', 'needs_review': 'cannot', 'unable_to_assess': 'unknown'}.get(outcome, 'pending')
         groups[key].append(attempt)
     return {"day": value, "scope": scope, "groups": groups, "activity": activity_counts(connection, day, day, scope).get(value, {"total": 0, "code": 0, "theory": 0}),
             "attempts": attempts, "interviews": interviews, "reflections": reflections,

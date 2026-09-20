@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from app.adapters.agnes import AgnesClient, AgnesError, AgnesRateLimitError
 from app.services.evaluations import EvaluationValidationError, adopt_model_evaluation
 from app.services.llm_config import client_for_config, freeze_request
+from app.services.materials import material_closure
 from app.services.model_json import ModelJSONError, complete_json, parse_model_json
 from app.storage.ids import new_id
 from app.storage.transactions import transaction
@@ -158,7 +159,7 @@ def _load_job_context(connection: sqlite3.Connection, job_id: str) -> dict:
         "SELECT reference_ids_json,materials_json FROM version_resources WHERE version_id=?", (row["version_id"],),
     ).fetchone()
     image_reference = bool(refs and any(item.get('role') == 'reference' and item.get('kind') == 'media'
-                                       for item in json.loads(refs['materials_json'])))
+                                       for item in material_closure(json.loads(refs['materials_json']))))
     from app.services.reference_corrections import get_correction
     from app.services.reference_state import verification
     state = verification(connection, row['version_id'])

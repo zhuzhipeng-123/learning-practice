@@ -11,7 +11,7 @@ from tests.test_docx_parser import heading, text_block
 
 
 def sync_source(database, monkeypatch, source, reference):
-    raw = [heading('module', 1, 'Independent topic'), heading('q', 2, 'Explain the conditions'),
+    raw = [heading('module', 1, 'Independent topic'), heading('q', 3, 'Explain the conditions'),
            text_block('r', reference)]
     monkeypatch.setattr(DocxReader, 'read_latest', lambda *args: SimpleNamespace(
         revision=reference, blocks=raw, page_count=1))
@@ -71,12 +71,12 @@ def test_retired_anchor_requires_explicit_reassignment(database, monkeypatch):
 @pytest.mark.parametrize('container', [19, 34])
 @pytest.mark.parametrize('order', ['preorder', 'children_after_next_question'])
 def test_nested_reference_is_complete_and_not_a_question(container, order):
-    raw = [heading('module', 1, 'Unfamiliar topic'), heading('q', 2, 'What are the conditions?'),
+    raw = [heading('module', 1, 'Unfamiliar topic'), heading('q', 3, 'What are the conditions?'),
            text_block('a', 'Necessary condition A.'),
            {'block_id': 'box', 'block_type': container, 'children': ['nested', 'b']},
-           heading('nested', 2, 'Important exception'), text_block('b', 'Necessary condition B.'),
+           heading('nested', 4, 'Important exception'), text_block('b', 'Necessary condition B.'),
            {'block_id': 'divider', 'block_type': 22}, text_block('c', 'Condition C remains necessary.'),
-           heading('next', 2, 'Independent next question'), text_block('next-answer', 'Next answer.')]
+           heading('next', 3, 'Independent next question'), text_block('next-answer', 'Next answer.')]
     if order != 'preorder':
         raw = raw[:4] + raw[6:] + raw[4:6]
     parsed = parse_docx_blocks('s', 'd', 'theory', raw)
@@ -88,10 +88,26 @@ def test_nested_reference_is_complete_and_not_a_question(container, order):
 
 def test_unknown_reference_container_is_visible_as_a_gap():
     parsed = parse_docx_blocks('s', 'd', 'theory', [heading('module', 1, 'Topic'),
-        heading('q', 2, 'Explain the mechanism'), {'block_id':'unknown', 'block_type':999}])
+        heading('q', 3, 'Explain the mechanism'), {'block_id':'unknown', 'block_type':999}])
     assert parsed.published == []
     assert parsed.candidates[0].material_status == 'incomplete_reference'
     assert 'unknown' in parsed.candidates[0].parse_issues
+
+
+def test_table_cell_heading_does_not_create_a_question_or_break_order():
+    raw = [
+        heading('module', 1, 'Topic'), heading('q', 3, 'Explain the mechanism'),
+        {'block_id': 'table', 'block_type': 31, 'children': ['cell']},
+        {'block_id': 'cell', 'block_type': 32, 'children': ['cell-heading', 'cell-text']},
+        heading('cell-heading', 3, 'Cell label'), text_block('cell-text', 'Cell explanation.'),
+        text_block('tail', 'Final condition.'),
+    ]
+
+    parsed = parse_docx_blocks('s', 'd', 'theory', raw)
+
+    assert [item.main_anchor_block_id for item in parsed.published] == ['q']
+    assert parsed.published[0].reference_text == 'Cell label\nCell explanation.\nFinal condition.'
+    assert parsed.published[0].material_status == 'media_required'
 
 
 def test_legacy_multiple_active_bindings_require_explicit_owner(database, monkeypatch):
@@ -120,7 +136,7 @@ def test_legacy_multiple_active_bindings_require_explicit_owner(database, monkey
 def test_invalid_block_graph_never_replaces_saved_source(database, monkeypatch, broken):
     _, _, source, question = migrated_question(database, monkeypatch)
     version = database.execute('SELECT current_version_id FROM question WHERE id=?', (question,)).fetchone()[0]
-    raw = [heading('module', 1, 'Topic'), heading('q', 2, 'Explain conditions'),
+    raw = [heading('module', 1, 'Topic'), heading('q', 3, 'Explain conditions'),
            {'block_id':'box', 'block_type':19, 'children':['box' if broken == 'cycle' else 'absent']}]
     monkeypatch.setattr(DocxReader, 'read_latest', lambda *args: SimpleNamespace(revision='broken', blocks=raw, page_count=1))
     with pytest.raises((ValueError, RuntimeError)):

@@ -6,7 +6,12 @@ from fastapi.testclient import TestClient
 
 from app.domain import Submission
 from app.main import app
-from app.services.current_practice import current_daily_batch, draw_daily_batch, retire_expired
+from app.services.current_practice import (
+    adopt_legacy_daily_batch,
+    current_daily_batch,
+    draw_daily_batch,
+    retire_expired,
+)
 from app.services.free_batches import (
     batch_state,
     practice_state,
@@ -57,6 +62,89 @@ def test_invalid_new_daily_batch_rolls_back_retirement(database):
         draw_daily_batch(database, local_today(), 1, 0, {'invalid': 1}, 'invalid', 'first')
     assert database.execute('SELECT status FROM task WHERE id=?', (first['task_ids'][0],)).fetchone()[0] == 'pending'
     assert current_daily_batch(database, first['plan_id']) == first
+
+
+def test_empty_replacement_pool_keeps_the_confirmed_batch(database):
+    pool(database, 1, 'code')
+    first = draw_daily_batch(database, local_today(), 1, 0, {}, 'first', '')
+    database.execute("UPDATE question SET source_status='removed' WHERE id=(SELECT question_id FROM task WHERE id=?)",
+                     (first['task_ids'][0],))
+    database.commit()
+    with pytest.raises(ValueError, match='原题单已保留'):
+        draw_daily_batch(database, local_today(), 1, 0, {}, 'empty', 'first')
+    assert database.execute('SELECT status FROM task WHERE id=?', (first['task_ids'][0],)).fetchone()[0] == 'pending'
+    assert current_daily_batch(database, first['plan_id']) == first
+
+
+def test_legacy_automatic_batch_is_not_treated_as_confirmation(database):
+    pool(database, 1, 'code')
+    legacy = draw_daily_batch(
+        database, local_today(), 1, 0, {}, 'daily-auto:' + local_today().isoformat(), ''
+    )
+    assert current_daily_batch(database, legacy['plan_id']) is None
+    confirmed = draw_daily_batch(database, local_today(), 1, 0, {}, 'confirmed', '')
+    assert current_daily_batch(database, confirmed['plan_id']) == confirmed
+
+
+def test_adopt_legacy_batch_replays_without_changing_tasks_or_progress(database):
+    pool(database, 2, 'code')
+    legacy = draw_daily_batch(
+        database, local_today(), 2, 0, {}, 'daily-auto:' + local_today().isoformat(), ''
+    )
+    started = legacy['task_ids'][0]
+    start_attempt(database, started, 'daily', datetime.now(UTC))
+    before = [tuple(row) for row in database.execute(
+        'SELECT id,status,question_version_id FROM task WHERE plan_id=? ORDER BY id',
+        (legacy['plan_id'],),
+    )]
+
+    adopted = adopt_legacy_daily_batch(database, local_today(), 'adopt-legacy', legacy['batch_key'])
+    assert adopt_legacy_daily_batch(database, local_today(), 'adopt-legacy', legacy['batch_key']) == adopted
+    assert adopted['task_ids'] == legacy['task_ids']
+    assert [tuple(row) for row in database.execute(
+        'SELECT id,status,question_version_id FROM task WHERE plan_id=? ORDER BY id',
+        (legacy['plan_id'],),
+    )] == before
+    assert database.execute('SELECT COUNT(*) FROM attempt WHERE task_id=?', (started,)).fetchone()[0] == 1
+    with pytest.raises(IdempotencyConflictError):
+        adopt_legacy_daily_batch(database, local_today(), 'adopt-legacy', 'different-legacy-batch')
+
+
+def test_adopt_legacy_batch_api_is_replayable_and_rejects_changed_payload(monkeypatch):
+    monkeypatch.setattr('app.services.bootstrap.load_initial_sources', list)
+    with TestClient(app) as client:
+        db = connect_database(app.state.database_path)
+        pool(db, 1, 'code')
+        db.commit()
+        legacy = draw_daily_batch(
+            db, local_today(), 1, 0, {}, 'daily-auto:' + local_today().isoformat(), ''
+        )
+        task_id = legacy['task_ids'][0]
+        start_attempt(db, task_id, 'daily', datetime.now(UTC))
+        body = {
+            'plan_date': local_today().isoformat(),
+            'code_target': 1,
+            'theory_target': 0,
+            'adopt_legacy': True,
+            'expected_batch': legacy['batch_key'],
+        }
+        headers = {'X-Requested-With': 'learning-practice', 'Idempotency-Key': 'adopt-api'}
+        path = '/api/plans/' + legacy['plan_id']
+
+        first = client.put(path, headers=headers, json=body)
+        replay = client.put(path, headers=headers, json=body)
+        conflict = client.put(
+            path,
+            headers=headers,
+            json={**body, 'expected_batch': 'different-legacy-batch'},
+        )
+
+        assert first.status_code == 200 and replay.json() == first.json()
+        assert first.json()['task_ids'] == legacy['task_ids']
+        assert conflict.status_code == 409
+        assert db.execute('SELECT status FROM task WHERE id=?', (task_id,)).fetchone()[0] == 'in_progress'
+        assert db.execute('SELECT COUNT(*) FROM attempt WHERE task_id=?', (task_id,)).fetchone()[0] == 1
+        db.close()
 
 
 def test_rollover_retires_daily_and_free_but_preserves_review_work(database):

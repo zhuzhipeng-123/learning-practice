@@ -1,7 +1,7 @@
 {% macro tree(nodes, quotas=false, depth=0) %}
-{% for node in nodes %}<details class="module-node">
-<summary><span>{{ node.label }}</span><small>{{ node.total }} 题{% if quotas %} · 可选 {{ node.available }}{% endif %}{% if node.pending %} · {{ node.pending }} 条待整理{% endif %}</small></summary>
-{% if quotas and depth > 0 %}<label class="module-setting">这个范围练 <input class="module-quota" aria-label="{{ node.path }}题数" data-path="{{ node.path }}" type="number" min="0" max="100" value="0"> 题</label>{% endif %}
+{% for node in nodes %}<details class="module-node" data-module-node="{{ node.id if node.id is defined else node.path }}">
+<summary>{% if quotas %}<input class="module-scope" type="checkbox" aria-label="选择 {{ node.path }}" data-module-id="{{ node.id }}" data-parent-id="{{ node.parent_id or '' }}">{% endif %}<span>{{ node.label }}</span><small>{{ node.total }} 题{% if quotas %} · 可选 {{ node.available }}{% endif %}{% if node.pending %} · {{ node.pending }} 条待整理{% endif %}</small></summary>
+{% if quotas and depth > 0 %}<label class="module-setting">这个范围练 <input class="module-quota" aria-label="{{ node.path }}题数" data-path="{{ node.id }}" type="number" min="0" max="100" value="0"> 题</label>{% endif %}
 {{ tree(node.children.values(), quotas, depth+1) }}
 {% if not node.total and not node.children %}<p class="muted">这个范围暂时没有可抽取的完整题目。</p>{% endif %}
 </details>{% endfor %}

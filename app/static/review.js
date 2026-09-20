@@ -12,3 +12,13 @@ for (const button of document.querySelectorAll('[data-review-question]')) {
     finally { button.disabled = false; }
   });
 }
+
+for (const target of document.querySelectorAll('[data-material-version]')) {
+  const question = target.dataset.materialQuestion, version = target.dataset.materialVersion;
+  const fallback = target.textContent;
+  requestJSON(`/api/questions/${question}/versions/${version}/prompt-materials`)
+    .then(data => learningMaterials.render(target, data.materials,
+      blockId => `/api/questions/${question}/versions/${version}/materials/${encodeURIComponent(blockId)}`,
+      fallback))
+    .catch(() => { /* Keep the frozen plain-text preview available. */ });
+}

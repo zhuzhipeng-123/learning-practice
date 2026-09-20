@@ -28,6 +28,7 @@ from app.services.practice import (
     submit_theory,
 )
 from app.storage.database import connect_database, initialize_database
+from tests.helpers import remove_migrations_after
 from tests.test_model_modules import HEADERS
 from tests.test_practice_review import make_plan, seed_question
 from tests.test_repair_business import submitted_theory
@@ -163,6 +164,7 @@ def test_truncated_plain_text_is_not_success(monkeypatch):
 
 def test_v4_upgrade_backfills_existing_evaluation_jobs(database):
     result = submitted_theory(database)
+    remove_migrations_after(database, 4)
     database.execute("DROP TABLE evaluation_job_target")
     database.execute("DROP TABLE provider_cooldown")
     database.execute("DROP TABLE source_tree_member")

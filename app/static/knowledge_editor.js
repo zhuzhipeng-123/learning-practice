@@ -1,11 +1,30 @@
 (() => {
 const root = document.querySelector('#knowledge-editor'), questionId = root.dataset.questionId;
 const status = document.querySelector('#knowledge-status');
+const requestedVersion = new URLSearchParams(location.search).get('version');
+const versionSelect = document.querySelector('#knowledge-version');
+if (requestedVersion && [...versionSelect.options].some(option => option.value === requestedVersion)) {
+  versionSelect.value = requestedVersion;
+}
 const prompt = document.querySelector('#knowledge-prompt'), reference = document.querySelector('#knowledge-reference');
 const category = document.querySelector('#knowledge-category'), verified = document.querySelector('#knowledge-verified');
 const correction = document.querySelector('#correction-content'), sources = document.querySelector('#correction-sources');
 let current = null;
 for (const field of [prompt, reference]) field.addEventListener('input', () => { verified.checked = false; });
+function renderMaterials(target, label, values, role) {
+  target.replaceChildren();
+  const heading = document.createElement('h4'); heading.textContent = label;
+  const content = document.createElement('div'); target.append(heading, content);
+  const shown = learningMaterials.render(content, values,
+    blockId => `/api/questions/${questionId}/versions/${current.version_id}/materials/${encodeURIComponent(blockId)}`,
+    '');
+  target.hidden = !shown;
+  if (shown && role === 'reference') {
+    const note = document.createElement('p'); note.className = 'muted';
+    note.textContent = '这里显示所选版本的答案图片与表格；本次查看已记录答案暴露。';
+    heading.after(note);
+  }
+}
 async function load() {
   const unlock = lockControls(root.querySelectorAll('button,input,textarea,select'));
   try {
@@ -17,6 +36,8 @@ async function load() {
     verified.checked = current.reference_verification.verified;
     correction.value = current.reference_correction?.content || '';
     sources.value = (current.reference_correction?.sources || []).join('\n');
+    renderMaterials(document.querySelector('#knowledge-prompt-materials'), '冻结题干中的图片与表格', current.prompt_materials, 'prompt');
+    renderMaterials(document.querySelector('#knowledge-reference-materials'), '冻结参考中的图片与表格', current.reference_materials, 'reference');
     document.querySelector('#knowledge-fields').hidden = false;
     document.querySelector('#knowledge-derived').hidden = !current.editable;
     status.textContent = '已读取保存内容。修改题干或答案后，需要重新核对才能勾选核验。';

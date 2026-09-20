@@ -63,6 +63,7 @@ uv run ruff check .
 
 - [完整项目说明](README.html)（下载后用浏览器打开）
 - [实现状态及剩余限制](IMPLEMENTATION_STATUS.md)
+- [历史验收记录](docs/historical-acceptance.md)
 - [项目开发规则](AGENTS.md)
 - [迁移与环境配置](PORTABLE_SETUP.html)
 

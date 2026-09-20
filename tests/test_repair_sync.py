@@ -40,10 +40,10 @@ def test_source_content_round_trip(database, unrelated_changes):
 
 def test_confirmed_theory_refreshes_without_reapproval(database, monkeypatch):
     live_theory(database)
-    run_live(database, monkeypatch, 1, [heading("q", 1, "Why?"), text_block("r", "A")])
+    run_live(database, monkeypatch, 1, [heading("q", 3, "Why?"), text_block("r", "A")])
     candidate = database.execute("SELECT id FROM parser_candidate").fetchone()[0]
     question_id = approve_candidate(database, candidate)
-    run_live(database, monkeypatch, 2, [heading("q", 1, "Why now?"), text_block("r", "B")])
+    run_live(database, monkeypatch, 2, [heading("q", 3, "Why now?"), text_block("r", "B")])
     row = database.execute("SELECT v.prompt,v.reference_text FROM question q JOIN question_version v ON v.id=q.current_version_id WHERE q.id=?", (question_id,)).fetchone()
     assert tuple(row) == ("Why now?", "B")
     assert database.execute("SELECT count(*) FROM question").fetchone()[0] == 1
@@ -52,9 +52,9 @@ def test_confirmed_theory_refreshes_without_reapproval(database, monkeypatch):
 
 def test_stale_candidate_cannot_overwrite_new_content(database, monkeypatch):
     live_theory(database)
-    run_live(database, monkeypatch, 1, [heading("q", 1, "Why?"), text_block("r", "A")])
+    run_live(database, monkeypatch, 1, [heading("q", 3, "Why?"), text_block("r", "A")])
     old = database.execute("SELECT id FROM parser_candidate").fetchone()[0]
-    run_live(database, monkeypatch, 2, [heading("q", 1, "Why?"), text_block("r", "B")])
+    run_live(database, monkeypatch, 2, [heading("q", 3, "Why?"), text_block("r", "B")])
     fresh = database.execute("SELECT id FROM parser_candidate WHERE status='pending'").fetchone()[0]
     approve_candidate(database, fresh)
     with pytest.raises(CandidateError):
@@ -64,10 +64,10 @@ def test_stale_candidate_cannot_overwrite_new_content(database, monkeypatch):
 
 def test_rebuilt_anchor_requires_explicit_identity_decision(database, monkeypatch):
     live_theory(database)
-    run_live(database, monkeypatch, 1, [heading("old", 1, "Why?"), text_block("r", "A")])
+    run_live(database, monkeypatch, 1, [heading("old", 3, "Why?"), text_block("r", "A")])
     question_id = approve_candidate(database, database.execute("SELECT id FROM parser_candidate").fetchone()[0])
     for revision in [2, 3]:
-        run_live(database, monkeypatch, revision, [heading("new", 1, "Why?"), text_block("r", "A")])
+        run_live(database, monkeypatch, revision, [heading("new", 3, "Why?"), text_block("r", "A")])
     candidate = database.execute("SELECT id FROM parser_candidate WHERE status='pending'").fetchone()[0]
     with pytest.raises(CandidateError):
         approve_candidate(database, candidate)
@@ -92,14 +92,14 @@ def test_publish_failure_rolls_back_snapshot_and_question(database, monkeypatch)
         raise RuntimeError("injected candidate failure")
     monkeypatch.setattr("app.services.source_sync._store_candidates", failure)
     with pytest.raises(RuntimeError):
-        run_live(database, monkeypatch, 1, [heading("q", 1, "Why?"), text_block("r", "A")])
+        run_live(database, monkeypatch, 1, [heading("q", 3, "Why?"), text_block("r", "A")])
     assert database.execute("SELECT count(*) FROM source_snapshot").fetchone()[0] == 0
     assert database.execute("SELECT status FROM sync_run").fetchone()[0] == "failed"
 
 
 def test_image_change_updates_basis_and_keeps_old_archive(database, monkeypatch):
     add_source(database, "live")
-    raw = [heading("q", 3, "Move zero"), {"block_id": "image", "block_type": 27,
+    raw = [heading("q", 3, "Move zero-图片"), {"block_id": "image", "block_type": 27,
            "image": {"token": "token"}}, text_block("r", "Use pointers")]
     class Images:
         content = b"\x89PNG\r\n\x1a\nfirst"
@@ -119,7 +119,7 @@ def test_failed_image_is_not_assignable(database, monkeypatch):
 
     from app.services.tasks import create_daily_plan
     add_source(database, "live")
-    raw = [heading("q", 3, "Move zero"), {"block_id": "image", "block_type": 27,
+    raw = [heading("q", 3, "Move zero-图片"), {"block_id": "image", "block_type": 27,
            "image": {"token": "token"}}, text_block("r", "Use pointers")]
     def fail(*args):
         raise LarkCliError("permission denied")
@@ -127,3 +127,20 @@ def test_failed_image_is_not_assignable(database, monkeypatch):
     plan = create_daily_plan(database, date(2026, 9, 1), 1, 0, {}, "plan")
     assert plan["tasks"] == []
     assert plan["shortages"]["code"] == 1
+
+
+def test_old_image_binding_cannot_override_new_ambiguous_roles(database, monkeypatch):
+    add_source(database, 'live')
+    client = SimpleNamespace(download_media=lambda token, output, identity:
+                             output.write_bytes(b'\x89PNG\r\n\x1a\nfixture'))
+    marked = [heading('q', 3, 'Move zero-图片'),
+              {'block_id': 'image', 'block_type': 27, 'image': {'token': 'token'}},
+              text_block('answer', 'Use pointers')]
+    run_live(database, monkeypatch, 1, marked, client)
+    original = database.execute('SELECT current_version_id FROM question').fetchone()[0]
+
+    run_live(database, monkeypatch, 2, [heading('q', 3, 'Move zero'), *marked[1:]], client)
+
+    assert database.execute('SELECT current_version_id FROM question').fetchone()[0] == original
+    assert database.execute('SELECT source_status FROM question').fetchone()[0] == 'missing_pending'
+    assert database.execute("SELECT COUNT(*) FROM parser_candidate WHERE status='pending'").fetchone()[0] == 1

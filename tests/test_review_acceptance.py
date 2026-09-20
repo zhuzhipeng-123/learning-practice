@@ -15,7 +15,7 @@ from tests.test_practice_review import seed_question
 
 
 def text_block(key, text, kind=2):
-    name = {2: 'text', 3: 'heading1', 4: 'heading2'}.get(kind, 'text')
+    name = {2: 'text', 3: 'heading1', 4: 'heading2', 5: 'heading3'}.get(kind, 'text')
     return {'block_id': key, 'block_type': kind,
             name: {'elements': [{'text_run': {'content': text}}]}}
 
@@ -54,10 +54,11 @@ def test_review_version_conflict_returns_existing_without_duplicate(database):
     [text_block('p', 'See the necessary table'), {'block_id': 'table', 'block_type': 31}],
 ])
 def test_incomplete_reference_never_claims_complete(tail):
-    blocks = [text_block('module', 'Module', 3), text_block('question', 'Explain?', 4), *tail]
+    blocks = [text_block('module', 'Module', 3), text_block('question', 'Explain?', 5), *tail]
     result = parse_docx_blocks('source', 'document', 'theory', blocks)
-    assert not result.published
-    assert result.candidates[0].material_status != 'complete'
+    questions = [*result.published, *result.candidates]
+    assert len(questions) == 1
+    assert questions[0].material_status != 'complete'
 
 
 def test_topic_matching_returns_pool_larger_than_draw():

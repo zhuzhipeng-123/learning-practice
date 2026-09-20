@@ -14,7 +14,7 @@ from app.services.wiki_sources import source_prefix
 from app.storage.ids import new_id
 from app.storage.transactions import transaction
 
-PARSER_VERSION = "theory-h1-h3-v7-containers"
+PARSER_VERSION = "ordered-h3-image-suffix-v8"
 
 
 class SyncSupersededError(SyncIntegrityError):
@@ -41,8 +41,8 @@ def sync_registered_source(connection, source_id: str, client=None):
         parsed = parse_docx_blocks(source_id, source["document_id"], source["question_type"], result.blocks, prefix)
         drafts, candidates, invalid = select_drafts(connection, source, result.blocks, parsed)
         materials = collect_materials(connection, source, result.blocks, [*drafts, *candidates], remote)
-        drafts = [apply_materials(draft, materials) for draft in drafts]
-        candidates = [apply_materials(draft, materials) for draft in candidates]
+        drafts = [apply_materials(draft, materials, result.blocks) for draft in drafts]
+        candidates = [apply_materials(draft, materials, result.blocks) for draft in candidates]
         ambiguous = bool(invalid or parsed.unsupported_block_ids or candidates)
         incomplete = any(item["status"] != "complete" for item in materials.values())
         with transaction(connection):

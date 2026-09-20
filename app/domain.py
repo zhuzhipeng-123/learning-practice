@@ -4,6 +4,7 @@ from typing import Literal
 
 QuestionType = Literal["code", "theory"]
 SourceKind = Literal["feishu", "derived"]
+MasteryLevel = Literal["unknown", "vague", "partial"]
 
 
 @dataclass(frozen=True)
@@ -34,3 +35,4 @@ class Submission:
     code_self_result: Literal["can_solve", "cannot_solve"] | None = None
     note: str | None = None
     answer_exposed_at: datetime | None = None
+    mastery_level: MasteryLevel | None = None

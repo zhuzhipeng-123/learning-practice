@@ -9,6 +9,7 @@ from app.services.interview_setup import prepare_direction
 from app.services.model_jobs import ModelJobError
 from app.services.model_json import ModelJSONError, parse_model_json
 from app.services.question_quality import validate_quality
+from tests.helpers import remove_migrations_after
 from tests.quality_fixtures import quality_result
 
 
@@ -238,6 +239,7 @@ def test_v10_migration_preserves_existing_records_and_creates_backup(database):
 
     from app.storage.database import initialize_database
     from app.storage.migrations import CURRENT_VERSION
+    remove_migrations_after(database, 10)
     database.execute('DROP TABLE reference_verification')
     database.execute('DROP TABLE reference_correction_history')
     database.execute('DROP TABLE reference_correction')

@@ -2,7 +2,17 @@
 
 import json
 
-from app.parsers.docx import HEADING_TYPES, block_text
+from app.parsers.block_tree import ordered_blocks
+from app.parsers.docx import block_text, heading_level
+
+CHANGE_LIST_KEYS = (
+    'added', 'updated', 'removed', 'missing', 'restored', 'excluded',
+    'modules_added', 'modules_removed', 'modules_updated',
+)
+
+
+def empty_inventory_changes():
+    return {name: [] for name in CHANGE_LIST_KEYS}
 
 
 def source_inventory(connection, source_id):
@@ -13,8 +23,9 @@ def source_inventory(connection, source_id):
     snapshot = connection.execute("SELECT ss.blocks_json FROM source_sync_state st JOIN source_snapshot ss "
                                   "ON ss.id=st.snapshot_id WHERE st.source_id=?", (source_id,)).fetchone()
     modules, path = {}, {}
-    for block in json.loads(snapshot[0]) if snapshot else []:
-        level = HEADING_TYPES.get(block.get('block_type'))
+    blocks = ordered_blocks(json.loads(snapshot[0])) if snapshot else []
+    for block in blocks:
+        level = heading_level(block)
         if level:
             path = {key: value for key, value in path.items() if key < level}
             path[level] = block_text(block)
@@ -23,7 +34,7 @@ def source_inventory(connection, source_id):
 
 
 def inventory_changes(before, after):
-    result = {name: [] for name in ('added', 'updated', 'removed', 'missing', 'restored', 'excluded', 'modules_added', 'modules_removed', 'modules_updated')}
+    result = empty_inventory_changes()
     unchanged = 0
     for key, item in after['questions'].items():
         old = before['questions'].get(key)

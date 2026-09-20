@@ -1,6 +1,7 @@
 import json
 
-from app.parsers.docx import HEADING_TYPES, block_text
+from app.parsers.block_tree import ordered_blocks
+from app.parsers.docx import block_text, classify_theory_headings, heading_level
 from app.services.model_budget import split_inputs
 from app.services.model_jobs import ModelJobError
 
@@ -10,26 +11,28 @@ def coverage(connection, source_id):
                              "WHERE st.source_id=?", (source_id,)).fetchone()
     if not row:
         return []
-    blocks = json.loads(row[0])
+    blocks = ordered_blocks(json.loads(row[0]))
+    source = connection.execute('SELECT question_type FROM source WHERE id=?', (source_id,)).fetchone()
+    roles = classify_theory_headings(blocks).roles if source and source['question_type'] == 'theory' else {}
     bindings = {r["main_anchor_block_id"]: dict(r) for r in connection.execute(
         "SELECT b.main_anchor_block_id,v.material_status,q.id FROM source_binding b JOIN question q ON q.id=b.question_id "
         "JOIN question_version v ON v.id=q.current_version_id WHERE b.source_id=? AND b.active=1", (source_id,))}
     pending = {r[0] for r in connection.execute("SELECT main_anchor_block_id FROM parser_candidate WHERE source_id=? AND status='pending'", (source_id,))}
     paths, items = {}, []
     for index, block in enumerate(blocks):
-        level = HEADING_TYPES.get(block.get("block_type"))
+        level = heading_level(block)
         if not level:
             continue
         paths = {k:v for k,v in paths.items() if k < level}
         paths[level] = block_text(block)
-        end = next((i for i in range(index+1, len(blocks)) if blocks[i].get("block_type") in HEADING_TYPES), len(blocks))
+        end = next((i for i in range(index + 1, len(blocks)) if heading_level(blocks[i]) is not None), len(blocks))
         body = blocks[index+1:end]
         anchor = block["block_id"]
-        state = "已入库" if anchor in bindings else "待确认" if anchor in pending else "未识别 / 待核验"
+        role = roles.get(anchor)
+        module = role in {'module', 'reference_heading'} or bool(source and source['question_type'] == 'code' and level <= 2)
+        state = "目录" if module else "已入库" if anchor in bindings else "待确认" if anchor in pending else "未识别 / 待核验"
         if anchor in bindings and bindings[anchor]["material_status"] not in {"complete", "verified", "text_complete"}:
             state = "素材未就绪"
-        if end < len(blocks) and HEADING_TYPES[blocks[end]["block_type"]] > level and not any(block_text(b) or "image" in b for b in body):
-            state = "目录"
         items.append({"anchor": anchor, "path": " > ".join(paths.values()), "title": block_text(block), "state": state,
                       "images": sum("image" in b for b in body), "text_blocks": sum(bool(block_text(b)) for b in body)})
     return items

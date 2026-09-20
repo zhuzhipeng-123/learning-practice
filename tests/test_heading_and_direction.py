@@ -10,7 +10,7 @@ from app.main import app
 from app.parsers.docx import parse_docx_blocks
 from app.services.interview_setup import prepare_direction
 from app.services.learning_clock import local_today
-from app.services.local_reparse import reparse_theory_snapshots
+from app.services.local_reparse import preview_theory_reparse, reparse_theory_snapshots
 from app.services.model_jobs import ModelJobError
 from app.services.plan_editing import update_daily_plan
 from app.services.practice import start_attempt
@@ -24,23 +24,23 @@ from tests.test_sync import draft
 
 
 @pytest.mark.parametrize('level', range(1, 7))
-def test_only_h1_through_h3_can_be_questions(level):
+def test_only_h3_is_a_standalone_question_without_container_context(level):
     raw = [heading('q', level, '工具调用'), text_block('answer', '参数校验'), text_block('body-question', '为什么？')]
     result = parse_docx_blocks('s', 'd', 'theory', raw, '八股 > Agent')
-    assert len(result.published) == int(level <= 3)
+    assert len(result.published) == int(level == 3)
     assert result.candidates == []
-    if level <= 3:
+    if level == 3:
         assert result.published[0].reference_block_ids == ('answer', 'body-question')
 
 
-def test_deep_headings_and_question_marks_remain_in_reference():
+def test_marked_deep_heading_under_container_becomes_child_question():
     raw = [heading('module', 1, 'Agent'), heading('q', 3, '工具调用'),
-           heading('detail', 4, '为什么需要校验？'), text_block('a', '先校验参数'),
+           heading('detail', 4, '问题：为什么需要校验？'), text_block('a', '先校验参数'),
            text_block('body', '有哪些错误？'), text_block('more', '参数缺失等'),
            heading('next', 3, '记忆'), text_block('b', '外部存储')]
     result = parse_docx_blocks('s', 'd', 'theory', raw, '八股')
-    assert [d.main_anchor_block_id for d in result.published] == ['q', 'next']
-    assert result.published[0].reference_block_ids == ('detail', 'a', 'body', 'more')
+    assert [d.main_anchor_block_id for d in result.published] == ['detail', 'next']
+    assert result.published[0].reference_block_ids == ('a', 'body', 'more')
     assert result.published[1].reference_block_ids == ('b',)
 
 
@@ -70,6 +70,24 @@ def test_local_rule_reparse_keeps_history_and_remote_freshness(database, monkeyp
     assert update_daily_plan(database, plan['plan_id'], 0, 1, {})['tasks'][0]['id'] == task['id']
 
 
+def test_reparse_preview_is_read_only_and_stale_preview_cannot_apply(database):
+    live_theory(database)
+    raw = [heading('module', 1, 'Agent'), heading('q', 3, '工具调用'), text_block('answer', '校验参数。')]
+    publish_snapshot(database, 'live', '1', '1', raw, [], 'old-parser')
+    before = {table: [tuple(row) for row in database.execute(f'SELECT * FROM {table} ORDER BY rowid')]
+              for table in ('question', 'question_version', 'source_binding', 'source_sync_state', 'sync_run')}
+
+    preview = preview_theory_reparse(database)
+
+    assert preview[0]['published_anchors'] == ['q']
+    assert before == {table: [tuple(row) for row in database.execute(f'SELECT * FROM {table} ORDER BY rowid')]
+                      for table in before}
+    database.execute("UPDATE source_snapshot SET revision='changed' WHERE id=?", (preview[0]['snapshot_id'],))
+    with pytest.raises(ValueError, match='重新生成迁移预览'):
+        reparse_theory_snapshots(database, preview)
+    assert database.execute('SELECT COUNT(*) FROM question').fetchone()[0] == 0
+
+
 def test_edit_replaces_excluded_untouched_task(database):
     pool(database, count=3)
     plan = create_daily_plan(database, local_today(), 0, 1, {}, 'plan')
@@ -94,7 +112,8 @@ def test_home_does_not_restore_saved_base_extra_or_older_tasks(monkeypatch):
             add_tasks(db, plan['plan_id'], [r[0] for r in selected], 'free_practice', 'extra')
             db.commit()
             html = client.get('/').text
-            assert html.index('heatmap-panel') < html.index('id="daily-reflection"') < html.index('id="code-target"')
+            assert html.index('id="code-target"') < html.index('id="daily-reflection"')
+            assert html.index('id="code-target"') < html.index('heatmap-panel')
             base = html.split('id="daily-task-list"')[1].split('id="older-practice"')[0]
             assert base.count('class="task-row"') == 0
             assert all(t['id'] not in html for t in plan['tasks'])

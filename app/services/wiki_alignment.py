@@ -8,6 +8,7 @@ from threading import BoundedSemaphore, Event
 
 from app.adapters.lark_cli import LarkCliClient
 from app.adapters.wiki_reader import read_wiki_tree
+from app.services.alignment_report import empty_inventory_changes
 from app.services.source_sync import sync_registered_source
 from app.services.wiki_sources import reconcile_tree
 from app.storage.database import connect_database
@@ -17,15 +18,31 @@ from app.storage.transactions import transaction
 _analysis_slots = BoundedSemaphore(2)
 
 
-def align_source_tree(connection, source_id, analyze, client=None, change_note=''):
+def initial_alignment_summary(change_note=''):
+    return {'phase': 'queued', 'change_note': change_note, 'documents': [], 'tree_errors': [],
+            'stage_errors': [], 'tree_complete': False, 'document_changes': {},
+            'analysis': {'status': 'running', 'total': 0, 'processed': 0, 'suggestions': [], 'errors': []}}
+
+
+def align_source_tree(connection, source_id, analyze, client=None, change_note='', run_id=None):
     root = dict(connection.execute('SELECT * FROM source WHERE id=?', (source_id,)).fetchone())
-    run_id = new_id('alignment')
-    summary = {'phase': 'discovery', 'change_note': change_note, 'documents': [], 'tree_errors': [], 'tree_complete': False,
-               'document_changes': {}, 'analysis': {'status': 'running', 'total': 0, 'processed': 0, 'suggestions': [], 'errors': []}}
+    run_id = run_id or new_id('alignment')
+    summary = initial_alignment_summary(change_note)
+    summary['phase'] = 'discovery'
     with transaction(connection):
-        connection.execute("INSERT INTO alignment_run(id,source_id,started_at,status) VALUES (?,?,?,'running')",
-                           (run_id, source_id, datetime.now(UTC).isoformat()))
+        existing = connection.execute('SELECT source_id,summary_json FROM alignment_run WHERE id=?', (run_id,)).fetchone()
+        if existing:
+            if existing['source_id'] != source_id:
+                raise ValueError('alignment run does not belong to this source')
+            saved = json.loads(existing['summary_json'] or '{}')
+            if saved.get('change_note', '') != change_note:
+                raise ValueError('alignment run payload changed')
+            connection.execute("UPDATE alignment_run SET status='running',finished_at=NULL,error=NULL WHERE id=?", (run_id,))
+        else:
+            connection.execute("INSERT INTO alignment_run(id,source_id,started_at,status) VALUES (?,?,?,'running')",
+                               (run_id, source_id, datetime.now(UTC).isoformat()))
     _save(connection, run_id, summary)
+    stage = 'discovery'
     try:
         remote = client or LarkCliClient()
         if '/wiki/' in root['wiki_url']:
@@ -38,6 +55,7 @@ def align_source_tree(connection, source_id, analyze, client=None, change_note='
             summary['tree_complete'] = True
         summary['documents'] = [{'source_id': key, 'path': path, 'status': 'pending', 'change_note': change_note} for key, path in sources.items()]
         summary['phase'] = 'documents'
+        stage = 'documents'
         location = connection.execute('PRAGMA database_list').fetchone()[2]
         model_unavailable = Event()
         with ThreadPoolExecutor(max_workers=3) as pool:
@@ -46,20 +64,28 @@ def align_source_tree(connection, source_id, analyze, client=None, change_note='
                 done, pending = wait(pending, timeout=1, return_when=FIRST_COMPLETED)
                 for future in done:
                     future.result()
+                stage = 'aggregation'
                 _aggregate(summary)
                 _save(connection, run_id, summary)
+                stage = 'documents'
         if change_note:
+            stage = 'review'
             summary['phase'] = 'review'; _save(connection, run_id, summary)
             if model_unavailable.is_set():
                 summary['review_error'] = '本轮模型连接异常，原文读取已保留；请稍后重新对齐以完成复核'
             else:
                 _review_changes(connection, source_id, run_id, summary)
         incomplete = not summary['tree_complete'] or summary.get('review_error') or summary['document_changes'].get('unsupported') or any(item['status'] != 'complete' for item in summary['documents'])
+        stage = 'finalization'
         summary['phase'] = 'finished'
         _save(connection, run_id, summary, 'partial' if incomplete else 'complete')
     except Exception as error:
-        logging.getLogger(__name__).exception('Wiki traversal failed: %s', source_id)
-        summary['tree_errors'].append({'path': root['wiki_url'], 'error': str(error)})
+        logging.getLogger(__name__).exception('Source alignment failed during %s: %s', stage, source_id)
+        summary['failure_stage'] = stage
+        if stage == 'discovery':
+            summary['tree_errors'].append({'path': root['wiki_url'], 'error': str(error)})
+        else:
+            summary['stage_errors'].append({'stage': stage, 'error': str(error)})
         summary['phase'] = 'failed'
         _save(connection, run_id, summary, 'failed')
     return summary
@@ -90,7 +116,7 @@ def _align_document(location, item, analyze, remote, model_unavailable=None):
 
 
 def _aggregate(summary):
-    summary['changes'] = {name: [] for name in ('added', 'updated', 'removed', 'missing', 'restored', 'modules_added', 'modules_removed', 'modules_updated')}
+    summary['changes'] = empty_inventory_changes()
     summary['changes']['unchanged'] = 0
     summary['candidate_count'] = 0
     analysis = {'status': 'complete', 'total': 0, 'processed': 0, 'suggestions': [], 'errors': []}

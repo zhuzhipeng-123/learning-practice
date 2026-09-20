@@ -20,6 +20,7 @@ from app.services.free_batches import (
 from app.services.learning_clock import local_today
 from app.services.tasks import IdempotencyConflictError
 from app.storage.database import connect_database, initialize_database
+from tests.helpers import remove_migrations_after
 from tests.test_student_workflow import pool
 
 
@@ -132,6 +133,27 @@ def test_latest_batch_is_restored_by_fresh_entry_without_model_calls(monkeypatch
         connection.close()
 
 
+def test_empty_confirmed_draw_uses_empty_state_copy(monkeypatch, manual_batches):
+    monkeypatch.setattr('app.services.bootstrap.load_initial_sources', list)
+    with TestClient(app) as client:
+        connection = connect_database(app.state.database_path)
+        pool(connection, 1, 'code')
+        connection.commit()
+        body = {**spec(), 'question_source': 'original', 'only_new': True}
+        location = Path(app.state.database_path)
+        first = queue_batch(connection, body, 'use-only-new-question')
+        run_batch(location, first['id'])
+        second = queue_batch(connection, body, 'empty-confirmed-draw')
+        run_batch(location, second['id'])
+
+        page = client.get('/free-practice')
+
+        assert page.status_code == 200
+        assert '这次没有可用新题' in page.text
+        assert practice_state(connection)['code']['result_batch']['result']['tasks'] == []
+        connection.close()
+
+
 def test_restart_releases_only_interrupted_batch_model_lease(database, monkeypatch, manual_batches):
     pool(database, 2, 'code')
     database.commit()
@@ -174,6 +196,7 @@ def test_v9_migration_preserves_legacy_free_tasks_and_backup(database):
     pool(database, 1, 'code')
     plan = create_daily_plan(database, local_today(), 0, 0, {}, 'legacy')
     result = add_free_practice(database, plan['plan_id'], '', 1, 'legacy-free', False, True, question_type='code')
+    remove_migrations_after(database, 9)
     database.execute('DROP TABLE free_practice_batch')
     database.execute('DROP TABLE reference_correction')
     database.execute('DROP TABLE reference_correction_history')

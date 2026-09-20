@@ -3,6 +3,13 @@ const root = document.querySelector('[data-session-id]');
 const sessionId = root.dataset.sessionId;
 const output = document.querySelector('#interview-output');
 const input = document.querySelector('#interview-answer');
+const mainQuestion = document.querySelector('[data-main-question]');
+const mainQuestionFallback = mainQuestion.textContent;
+requestJSON(`/api/questions/${root.dataset.questionId}/versions/${root.dataset.questionVersion}/prompt-materials`)
+  .then(data => learningMaterials.render(mainQuestion, data.materials,
+    blockId => `/api/questions/${root.dataset.questionId}/versions/${root.dataset.questionVersion}/materials/${encodeURIComponent(blockId)}`,
+    mainQuestionFallback))
+  .catch(() => { /* Keep the frozen plain-text question available. */ });
 const draftStore = tabLearningStore;
 const draftKey = `learning-interview-draft-${sessionId}`;
 const draftRevisionKey = `${draftKey}-revision`;
@@ -41,7 +48,12 @@ async function showReference(turnId, generate=false) {
     }
     status.textContent = data.model_generated ? '模型参考答案，已记录答案暴露；关键结论仍需核对。' : '来源参考答案，已记录答案暴露。';
     const title = document.createElement('h4'), answer = document.createElement('div');
-    title.textContent = data.question; renderModelText(answer, data.reference_text); content.append(title, answer);
+    title.textContent = data.question;
+    const rendered = learningMaterials.render(answer, data.materials,
+      blockId => `/api/questions/${data.question_id}/versions/${data.question_version_id}/materials/${encodeURIComponent(blockId)}`,
+      data.reference_text);
+    if (!rendered) renderModelText(answer, data.reference_text);
+    content.append(title, answer);
     if (data.reference_correction) {
       const correction = document.createElement('p'); correction.textContent = '本版本参考校正：' + data.reference_correction.content;
       content.append(correction);

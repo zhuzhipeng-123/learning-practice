@@ -4,9 +4,11 @@
 <div class="page-heading"><div><h2>想练什么，就练什么</h2><p class="muted">首次进入先选择并确认题单；确认后当天固定，关闭再打开仍是同一批题。次日随机本地原题自动更新；按描述选题或生成变种题需手动开始。代码与八股各自保存。</p></div><nav class="free-jump" aria-label="选择练习区域"><a href="#free-code">代码练习 ↓</a><a href="#free-theory">八股练习 ↓</a></nav></div>
 <details class="free-footprint"><summary>近半年学习足迹 · {{ heatmap.active_days }} 天有练习，共 {{ heatmap.activities }} 次主任务练习</summary>{% include "heatmap_panel.html" %}</details>
 {% for kind, label in [('code','代码'),('theory','八股')] %}
+{% set current_tasks = free_state[kind].result_batch.result.tasks | rejectattr('status', 'equalto', 'cancelled') | list if free_state[kind].result_batch else [] %}
+{% set active_batch = free_state[kind].batch and free_state[kind].batch.status in ['queued', 'running'] %}
 <section class="panel free-panel" id="free-{{ kind }}" data-kind="{{ kind }}" data-original-limit="{{ original_limit }}" data-variant-limit="{{ variant_limit }}">
 <div class="section-heading"><h3>{{ label }}练习</h3><span class="tag">独立设置 · 独立题单</span></div>
-<p class="batch-promise"><span class="batch-promise-label">{{ '今天接着练' if free_state[kind].batch else '先确认今天的题单' }}</span><small>{{ '题单保存在本机，修改下次设置不会换掉当前题目。' if free_state[kind].batch else '选好范围和数量，点击确认出题后，当天关闭再打开仍是同一批。' }}</small></p>
+<p class="batch-promise"><span class="batch-promise-label">{{ '今天接着练' if current_tasks else '正在准备这批题' if active_batch else '这次没有可用新题' if free_state[kind].result_batch else '这次没有成功出题' if free_state[kind].batch else '先确认今天的题单' }}</span><small>{{ '题单保存在本机，修改下次设置不会换掉当前题目。' if current_tasks else '可以先练另一栏；完成后会自动显示题目。' if active_batch else '调整范围或更新题库后，再主动确认一批。' if free_state[kind].result_batch else '按原设置重试，或修改设置后重新确认。' if free_state[kind].batch else '选好范围和数量，点击确认出题后，当天关闭再打开仍是同一批。' }}</small></p>
 <details class="batch-settings" {{ '' if free_state[kind].batch else 'open' }}><summary>出题设置 / 主动换一批</summary>
 <form class="free-form" data-kind="{{ kind }}">
 <div class="free-options">

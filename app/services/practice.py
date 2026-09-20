@@ -4,10 +4,9 @@ import sqlite3
 from datetime import UTC, datetime
 
 from app.domain import Submission
-from app.services.learning_clock import local_date
+from app.services.learning_clock import local_date, local_today
 from app.services.reflections import mark_model_reflections_stale
 from app.services.review import (
-    enter_code_review,
     enter_review,
     exposed_recently,
     get_active_round,
@@ -22,6 +21,9 @@ class PracticeError(RuntimeError):
     """A requested practice transition is invalid."""
 
 
+MASTERY_LEVELS = {'unknown', 'vague', 'partial'}
+
+
 @atomic
 def start_attempt(
     connection: sqlite3.Connection,
@@ -31,6 +33,7 @@ def start_attempt(
 ) -> str:
     """Freeze task version and active review round when answering starts."""
     task = _load_task_context(connection, task_id)
+    _reject_expired_practice(task)
     if task["status"] == 'cancelled':
         raise PracticeError('这道旧待办已作废，请返回当前题单；需要保留的题可在复习库继续练')
     if task["status"] == 'completed':
@@ -101,26 +104,33 @@ def submit_code(connection: sqlite3.Connection, submission: Submission) -> dict[
     kind = connection.execute("SELECT question_type FROM question WHERE id=?", (task["question_id"],)).fetchone()[0]
     if kind != "code":
         raise PracticeError("task requires a theory answer")
+    if submission.mastery_level and submission.mastery_level not in MASTERY_LEVELS:
+        raise PracticeError('unsupported mastery level')
+    if submission.code_self_result == 'can_solve' and submission.mastery_level:
+        raise PracticeError('会做的提交不需要设置不会程度')
     submitted_utc = submission.submitted_at.astimezone(UTC)
     activity_date = local_date(submission.submitted_at).isoformat()
+    if submission.code_self_result == 'cannot_solve':
+        _require_review_basis_available(connection, task['question_id'], task['review_basis_id'])
     with transaction(connection):
         _complete_attempt(connection, attempt["id"], submission, submitted_utc, activity_date)
         round_id = attempt["review_round_id"]
-        review_basis_conflict = False
+        mastery_id = None
         if submission.code_self_result == "cannot_solve":
-            entered_round = enter_code_review(
+            round_id = enter_review(
                 connection,
                 task["question_id"],
                 task["review_basis_id"],
                 "code_cannot_solve",
                 submitted_utc,
             )
-            review_basis_conflict = entered_round is None
-            round_id = entered_round or round_id
             connection.execute(
                 "UPDATE attempt SET review_round_id=? WHERE id=?",
                 (round_id, attempt["id"]),
             )
+            if submission.mastery_level:
+                mastery_id = _record_mastery(connection, task, attempt['id'], submission.mastery_level,
+                                             submission.request_key, submitted_utc)
         passed = submission.code_self_result == "can_solve"
         if passed and not exposed_recently(
             connection,
@@ -134,7 +144,9 @@ def submit_code(connection: sqlite3.Connection, submission: Submission) -> dict[
             "task_completed": True,
             "passed": passed,
             "review_round_id": round_id,
-            "review_basis_conflict": review_basis_conflict,
+            "review_basis_conflict": False,
+            "mastery_id": mastery_id,
+            "mastery_level": submission.mastery_level,
         }
         _save_submission_result(connection, submission.request_key, payload, result, submitted_utc)
     return result
@@ -179,6 +191,67 @@ def submit_theory(connection: sqlite3.Connection, submission: Submission) -> dic
         }
         _save_submission_result(connection, submission.request_key, payload, result, submitted_utc)
     return result
+
+
+@atomic
+def submit_unable(connection: sqlite3.Connection, submission: Submission) -> dict[str, object]:
+    if submission.mastery_level not in MASTERY_LEVELS:
+        raise PracticeError('请选择不会程度')
+    payload = {**_submission_payload(submission), 'submission_mode': 'unable'}
+    existing = _load_submission_result(connection, submission.request_key, payload)
+    if existing is not None:
+        return existing
+    attempt = _load_attempt_for_submit(connection, submission.task_id)
+    task = _load_task_context(connection, submission.task_id)
+    kind = connection.execute('SELECT question_type FROM question WHERE id=?', (task['question_id'],)).fetchone()[0]
+    if kind != 'theory':
+        raise PracticeError('代码题请使用代码自评提交')
+    _require_review_basis_available(connection, task['question_id'], task['review_basis_id'])
+    submitted_utc = submission.submitted_at.astimezone(UTC)
+    with transaction(connection):
+        _complete_attempt(connection, attempt['id'], submission, submitted_utc,
+                          local_date(submission.submitted_at).isoformat())
+        round_id = enter_review(connection, task['question_id'], task['review_basis_id'],
+                                'theory_explicit_unable', submitted_utc)
+        connection.execute('UPDATE attempt SET review_round_id=? WHERE id=?', (round_id, attempt['id']))
+        mastery_id = _record_mastery(connection, task, attempt['id'], submission.mastery_level,
+                                     submission.request_key, submitted_utc)
+        result = {'attempt_id': attempt['id'], 'task_completed': True, 'explicit_unable': True,
+                  'evaluation_status': 'not_requested', 'review_round_id': round_id,
+                  'mastery_id': mastery_id, 'mastery_level': submission.mastery_level}
+        _save_submission_result(connection, submission.request_key, payload, result, submitted_utc)
+    return result
+
+
+@atomic
+def set_mastery_level(connection, task_id, level, request_key, expected_mastery_id):
+    from app.services.tasks import _load_idempotent, _save_idempotent
+    if level not in MASTERY_LEVELS:
+        raise PracticeError('unsupported mastery level')
+    payload = {'task_id': task_id, 'level': level, 'expected_mastery_id': expected_mastery_id}
+    saved = _load_idempotent(connection, request_key, 'mastery_level', payload)
+    if saved is not None:
+        return saved
+    task = _load_task_context(connection, task_id)
+    _require_review_basis_available(connection, task['question_id'], task['review_basis_id'])
+    current = current_mastery(connection, task['question_id'], task['review_basis_id'])
+    if expected_mastery_id != (current['id'] if current else None):
+        raise IdempotencyConflictError('掌握程度已在其他页面更新，请刷新后重试')
+    now = datetime.now(UTC)
+    mastery_id = _record_mastery(connection, task, None, level, request_key, now)
+    attempt = connection.execute('SELECT activity_date FROM attempt WHERE task_id=? AND submitted_at IS NOT NULL '
+                                 'ORDER BY rowid DESC LIMIT 1', (task_id,)).fetchone()
+    if attempt and attempt['activity_date']:
+        connection.execute("UPDATE reflection SET stale=1 WHERE activity_date=? AND author='model'",
+                           (attempt['activity_date'],))
+    result = {'mastery_id': mastery_id, 'mastery_level': level}
+    _save_idempotent(connection, request_key, 'mastery_level', payload, result, now.isoformat())
+    return result
+
+
+def current_mastery(connection, question_id, review_basis_id):
+    return connection.execute('SELECT * FROM mastery_assessment WHERE question_id=? AND review_basis_id=? '
+                              'ORDER BY rowid DESC LIMIT 1', (question_id, review_basis_id)).fetchone()
 
 
 @atomic
@@ -310,7 +383,7 @@ def _complete_attempt(
 
 def _load_task_context(connection: sqlite3.Connection, task_id: str) -> sqlite3.Row:
     row = connection.execute(
-        "SELECT t.*, v.review_basis_id FROM task t "
+        "SELECT t.*,p.plan_date,v.review_basis_id FROM task t JOIN daily_plan p ON p.id=t.plan_id "
         "JOIN question_version v ON v.id=t.question_version_id WHERE t.id=?",
         (task_id,),
     ).fetchone()
@@ -320,36 +393,60 @@ def _load_task_context(connection: sqlite3.Connection, task_id: str) -> sqlite3.
 
 
 def _load_attempt_for_submit(connection: sqlite3.Connection, task_id: str) -> sqlite3.Row:
+    task = _load_task_context(connection, task_id)
+    _reject_expired_practice(task)
     row = connection.execute(
         "SELECT a.* FROM attempt a JOIN task t ON t.id=a.task_id "
         "WHERE a.task_id=? AND a.submitted_at IS NULL AND t.status='in_progress'",
         (task_id,),
     ).fetchone()
     if row is None:
-        task = _load_task_context(connection, task_id)
         if task['status'] == 'cancelled':
             raise PracticeError('这道旧待办已作废，请返回当前题单；需要保留的题可在复习库继续练')
         raise PracticeError('这次作答已结束或尚未开始，请刷新后查看当前状态')
     return row
 
 
+def _reject_expired_practice(task) -> None:
+    if task['origin'] in {'daily', 'free_practice'} and task['plan_date'] < local_today().isoformat():
+        raise PracticeError('这道旧题已跨天过期，回答没有提交；草稿仍保留。请返回今天并重新确认题单')
+
+
+def _require_review_basis_available(connection, question_id, review_basis_id):
+    active = get_active_round(connection, question_id)
+    if active and active['review_basis_id'] != review_basis_id:
+        raise PracticeError('复习库已有另一个版本，请先选择要保留的复习依据；本次提交尚未保存')
+
+
+def _record_mastery(connection, task, attempt_id, level, request_key, created_at):
+    mastery_id = new_id('mastery')
+    connection.execute('INSERT INTO mastery_assessment VALUES (?,?,?,?,?,?,?)',
+                       (mastery_id, task['question_id'], task['review_basis_id'], attempt_id,
+                        level, request_key, created_at.isoformat()))
+    return mastery_id
+
+
 def _submission_payload(submission: Submission) -> dict[str, str | None]:
-    return {
+    payload = {
         "task_id": submission.task_id,
         "answer_text": submission.answer_text,
         "code_self_result": submission.code_self_result,
         "note": submission.note,
     }
+    # Preserve the exact legacy hash when an old client did not submit a level.
+    if submission.mastery_level is not None:
+        payload['mastery_level'] = submission.mastery_level
+    return payload
 
 
-def _payload_hash(payload: dict[str, str | None]) -> str:
+def _payload_hash(payload: dict[str, object]) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 def _load_submission_result(
     connection: sqlite3.Connection,
     request_key: str,
-    payload: dict[str, str | None],
+    payload: dict[str, object],
 ) -> dict[str, object] | None:
     row = connection.execute(
         "SELECT operation, payload_hash, result_json FROM idempotency_record WHERE request_key=?",
@@ -365,7 +462,7 @@ def _load_submission_result(
 def _save_submission_result(
     connection: sqlite3.Connection,
     request_key: str,
-    payload: dict[str, str | None],
+    payload: dict[str, object],
     result: dict[str, object],
     submitted_at: datetime,
 ) -> None:

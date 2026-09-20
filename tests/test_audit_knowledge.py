@@ -21,6 +21,7 @@ from app.services.reference_corrections import save_correction
 from app.services.reference_state import verification
 from app.services.review_tasks import start_review_task
 from app.services.tasks import IdempotencyConflictError
+from tests.helpers import remove_migrations_after
 from tests.test_practice_review import make_plan, seed_question
 
 NOW = datetime.now(UTC)
@@ -181,6 +182,7 @@ def test_migration_retracts_only_legacy_unverified_automatic_scores(database):
         database.commit()
     assert database.execute('SELECT COUNT(*) FROM valid_review_pass').fetchone()[0] == 5
     assert database.execute("SELECT status FROM review_round WHERE question_id=?", (question,)).fetchone()[0] == 'ended'
+    remove_migrations_after(database, 11)
     database.execute('DROP TABLE reference_verification')
     database.execute('DROP TABLE reference_correction_history')
     database.execute('DELETE FROM schema_version WHERE version>=12')

@@ -6,6 +6,12 @@ from datetime import date, datetime
 from typing import Any
 
 from app.config import local_timezone_name
+from app.services.theory_scope import (
+    canonical_quotas,
+    is_descendant,
+    question_allowed,
+    resolve_scope,
+)
 from app.storage.ids import new_id
 from app.storage.transactions import atomic, transaction
 
@@ -28,6 +34,8 @@ def create_daily_plan(
     request_key: str,
     random_seed: int | None = None,
     required_date: date | None = None,
+    theory_scope: list[str] | None = None,
+    theory_catalog_version: str | None = None,
 ) -> dict[str, Any]:
     payload = {
         "date": plan_date.isoformat(),
@@ -35,6 +43,8 @@ def create_daily_plan(
         "theory_target": theory_target,
         "module_quotas": module_quotas,
     }
+    if theory_scope is not None or theory_catalog_version is not None:
+        payload.update(theory_scope=theory_scope, theory_catalog_version=theory_catalog_version)
     existing = _load_idempotent(connection, request_key, "create_daily_plan", payload)
     if existing is not None:
         return existing
@@ -48,23 +58,28 @@ def create_daily_plan(
         result = _plan_result(connection, current["id"])
         _save_idempotent(connection, request_key, 'create_daily_plan', payload, result, datetime.now().astimezone().isoformat())
         return result
-    _validate_targets(code_target, theory_target, module_quotas)
+    scope = resolve_scope(connection, theory_scope, theory_catalog_version, theory_target)
+    module_quotas = canonical_quotas(module_quotas, scope)
+    _validate_targets(code_target, theory_target, module_quotas, scope)
     selected, shortages = _select_questions(
         connection,
         code_target,
         theory_target,
         module_quotas,
         random.Random(random_seed),
+        scope=scope,
     )
     plan_id = current["id"] if current else new_id("plan")
     now = datetime.now().astimezone().isoformat()
     with transaction(connection):
         if current:
-            connection.execute("UPDATE daily_plan SET code_target=?,theory_target=?,allocation_json=? WHERE id=?",
-                               (code_target, theory_target, json.dumps(module_quotas, ensure_ascii=False, sort_keys=True), plan_id))
+            connection.execute("UPDATE daily_plan SET code_target=?,theory_target=?,allocation_json=?,theory_scope_json=? WHERE id=?",
+                               (code_target, theory_target, json.dumps(module_quotas, ensure_ascii=False, sort_keys=True),
+                                json.dumps(scope, ensure_ascii=False, sort_keys=True), plan_id))
         else:
             connection.execute(
-            "INSERT INTO daily_plan VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
+            "INSERT INTO daily_plan(id,plan_date,timezone,code_target,theory_target,added_target,allocation_json,created_at,theory_scope_json) "
+            "VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)",
             (
                 plan_id,
                 plan_date.isoformat(),
@@ -73,6 +88,7 @@ def create_daily_plan(
                 theory_target,
                 json.dumps(module_quotas, ensure_ascii=False, sort_keys=True),
                 now,
+                json.dumps(scope, ensure_ascii=False, sort_keys=True),
             ),
         )
         for question in selected:
@@ -145,7 +161,7 @@ def add_tasks(
     return result
 
 
-def _validate_targets(code_target: int, theory_target: int, quotas: dict[str, int]) -> None:
+def _validate_targets(code_target: int, theory_target: int, quotas: dict[str, int], scope=None) -> None:
     if code_target < 0 or theory_target < 0 or any(value < 0 for value in quotas.values()):
         raise ValueError("targets cannot be negative")
     if sum(quotas.values()) > theory_target:
@@ -153,7 +169,9 @@ def _validate_targets(code_target: int, theory_target: int, quotas: dict[str, in
     paths = list(quotas)
     for index, left in enumerate(paths):
         for right in paths[index + 1 :]:
-            if left.startswith(right + " > ") or right.startswith(left + " > "):
+            overlap = (is_descendant(left, right, scope) or is_descendant(right, left, scope)) if scope else (
+                left.startswith(right + " > ") or right.startswith(left + " > "))
+            if overlap:
                 raise ValueError("parent and child module quotas overlap")
 
 
@@ -164,10 +182,12 @@ def _select_questions(
     quotas: dict[str, int],
     generator: random.Random,
     exclude_ids: set[str] | None = None,
+    scope=None,
 ) -> tuple[list[sqlite3.Row], dict[str, int]]:
     rows = connection.execute(
-        "SELECT q.id, q.question_type, q.current_version_id, v.category_path "
+        "SELECT q.id, q.question_type, q.current_version_id, v.category_path,b.source_id,b.main_anchor_block_id "
         "FROM question q JOIN question_version v ON v.id=q.current_version_id "
+        "LEFT JOIN source_binding b ON b.question_id=q.id AND b.active=1 "
         "WHERE q.source_kind='feishu' AND q.source_status='active' "
         "AND v.material_status IN ('complete','verified','text_complete') "
         "AND NOT EXISTS (SELECT 1 FROM task pending WHERE pending.question_id=q.id "
@@ -180,15 +200,14 @@ def _select_questions(
     selected.extend(_sample(generator, code_rows, code_target))
     if len(code_rows) < code_target:
         shortages["code"] = code_target - len(code_rows)
-    theory_rows = [row for row in rows if row["question_type"] == "theory"]
+    theory_rows = [row for row in rows if row["question_type"] == "theory" and (
+        scope is None or question_allowed(row['id'], row['source_id'], row['main_anchor_block_id'], scope))]
     used_ids = {row["id"] for row in selected}
     for path, target in quotas.items():
         candidates = [
             row
             for row in theory_rows
-            if row["id"] not in used_ids and (
-                row["category_path"] == path or row["category_path"].startswith(path + " > ")
-            )
+            if row["id"] not in used_ids and _question_matches_quota(row, path, scope)
         ]
         chosen = _sample(generator, candidates, target)
         selected.extend(chosen)
@@ -205,27 +224,35 @@ def _select_questions(
 
 
 @atomic
-def fill_daily_plan(connection, plan_id, module_quotas=None):
+def fill_daily_plan(connection, plan_id, module_quotas=None, theory_scope=None, theory_catalog_version=None):
     plan = connection.execute("SELECT * FROM daily_plan WHERE id=?", (plan_id,)).fetchone()
     if plan is None:
         raise ValueError("今日计划不存在")
     assigned = connection.execute("SELECT t.question_id,q.question_type,v.category_path FROM task t "
                                   "JOIN question q ON q.id=t.question_id JOIN question_version v ON v.id=t.question_version_id "
                                   "WHERE t.plan_id=? AND t.target_kind='base' AND t.status!='cancelled'", (plan_id,)).fetchall()
-    quotas = json.loads(plan["allocation_json"])
-    if module_quotas is not None and module_quotas != quotas:
+    previous_scope = json.loads(plan['theory_scope_json'] or '{}')
+    scope = resolve_scope(connection, theory_scope, theory_catalog_version, plan['theory_target'], previous_scope)
+    quotas = canonical_quotas(json.loads(plan["allocation_json"]), scope)
+    requested_quotas = canonical_quotas(module_quotas, scope) if module_quotas is not None else quotas
+    if (theory_scope is not None and previous_scope and
+            scope['selected_ids'] != previous_scope.get('selected_ids') and
+            any(row["question_type"] == "theory" for row in assigned)):
+        raise ValueError("已有八股任务，模块范围已固定；请在新题单中调整")
+    if requested_quotas != quotas:
         if any(row["question_type"] == "theory" for row in assigned):
             raise ValueError("已有八股任务，模块分配已固定；补齐不会改动原分配")
-        _validate_targets(plan["code_target"], plan["theory_target"], module_quotas)
-        quotas = module_quotas
-        connection.execute("UPDATE daily_plan SET allocation_json=? WHERE id=?", (json.dumps(quotas, ensure_ascii=False), plan_id))
+        quotas = requested_quotas
+    _validate_targets(plan["code_target"], plan["theory_target"], quotas, scope)
+    connection.execute("UPDATE daily_plan SET allocation_json=?,theory_scope_json=? WHERE id=?",
+                       (json.dumps(quotas, ensure_ascii=False), json.dumps(scope, ensure_ascii=False), plan_id))
     remaining = {path: max(0, count - sum(row["question_type"] == "theory" and
-                 (row["category_path"] == path or row["category_path"].startswith(path + " > ")) for row in assigned))
+                 _assigned_matches_quota(connection, row, path, scope) for row in assigned))
                  for path, count in quotas.items()}
     code = max(0, plan["code_target"] - sum(row["question_type"] == "code" for row in assigned))
     theory = max(0, plan["theory_target"] - sum(row["question_type"] == "theory" for row in assigned))
     selected, shortages = _select_questions(connection, code, theory, remaining, random.Random(),
-                                            {row["question_id"] for row in assigned})
+                                            {row["question_id"] for row in assigned}, scope)
     for row in selected:
         connection.execute("INSERT INTO task VALUES (?,?,?,?,'daily','base','pending',?,NULL,NULL,NULL)",
                            (new_id("task"), plan_id, row["id"], row["current_version_id"], datetime.now().astimezone().isoformat()))
@@ -234,6 +261,29 @@ def fill_daily_plan(connection, plan_id, module_quotas=None):
 
 def _sample(generator: random.Random, rows: list[sqlite3.Row], count: int) -> list[sqlite3.Row]:
     return generator.sample(rows, min(count, len(rows)))
+
+
+def _question_matches_quota(row, module, scope):
+    if scope is None:
+        return row['category_path'] == module or row['category_path'].startswith(module + ' > ')
+    mapping = scope.get('question_modules', {})
+    from app.services.theory_scope import module_id
+    question_module = mapping.get(module_id(row['source_id'], row['main_anchor_block_id']))
+    return question_module == module or is_descendant(question_module, module, scope)
+
+
+def _assigned_matches_quota(connection, row, module, scope):
+    if row['question_type'] != 'theory':
+        return False
+    binding = connection.execute(
+        'SELECT source_id,main_anchor_block_id FROM source_binding WHERE question_id=? AND active=1',
+        (row['question_id'],),
+    ).fetchone()
+    if not binding:
+        return False
+    value = {'category_path': row['category_path'], 'source_id': binding['source_id'],
+             'main_anchor_block_id': binding['main_anchor_block_id']}
+    return _question_matches_quota(value, module, scope)
 
 
 def _payload_hash(payload: dict[str, Any]) -> str:

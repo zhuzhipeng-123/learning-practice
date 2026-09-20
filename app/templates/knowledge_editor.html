@@ -7,6 +7,10 @@
     <label>题干<textarea id="knowledge-prompt" rows="4" maxlength="4000"></textarea></label>
     <label>参考答案<textarea id="knowledge-reference" rows="8" maxlength="20000"></textarea></label>
     <label>分类<input id="knowledge-category" maxlength="1000"></label>
+    <section id="knowledge-materials" aria-label="所选冻结版本的结构化内容">
+      <div id="knowledge-prompt-materials" class="prose" hidden></div>
+      <div id="knowledge-reference-materials" class="prose" hidden></div>
+    </section>
     <div id="knowledge-derived" hidden>
       <label><input type="checkbox" id="knowledge-verified">我已核对本次填写的题干与答案，可以用于自动评价</label>
       <button id="save-knowledge">保存修改为新版本</button>

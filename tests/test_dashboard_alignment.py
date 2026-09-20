@@ -26,11 +26,12 @@ from tests.test_repair_sync import live_theory, run_live
 from tests.test_sync import blocks, draft
 
 
-def seed_ten_days(connection, today):
+def seed_ten_days(connection, today, monkeypatch):
     add_source(connection)
     publish_snapshot(connection, 'source-code', '1', '1', blocks(), [draft()], 'v1')
     for offset in range(10):
         day = today - timedelta(days=9-offset)
+        monkeypatch.setattr('app.services.practice.local_today', lambda current=day: current)
         plan = create_daily_plan(connection, day, 1, 0, {}, f'day-{offset}')
         task = plan['tasks'][0]['id']
         now = datetime.combine(day, datetime.min.time(), UTC) + timedelta(hours=8)
@@ -38,14 +39,14 @@ def seed_ten_days(connection, today):
         submit_code(connection, Submission(task, f'answer-{offset}', now, 'daily', code_self_result='can_solve'))
 
 
-def test_ten_days_visible_and_every_day_clickable():
+def test_ten_days_visible_and_every_day_clickable(monkeypatch):
     with TestClient(app) as client:
         db = connect_database(app.state.database_path)
         try:
             db.execute("DELETE FROM source")
             db.commit()
             today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
-            seed_ten_days(db, today)
+            seed_ten_days(db, today, monkeypatch)
             result = heatmap(db, today)
             assert result['active_days'] == result['activities'] == 10
             assert len(day_details(db, today)['groups']['can']) == 1
@@ -63,12 +64,13 @@ def test_ten_days_visible_and_every_day_clickable():
             db.close()
 
 
-def test_heatmap_deduplicates_and_uses_actual_local_day(database):
+def test_heatmap_deduplicates_and_uses_actual_local_day(database, monkeypatch):
     add_source(database)
     publish_snapshot(database, 'source-code', '1', '1', blocks(), [draft()], 'v1')
-    plan = create_daily_plan(database, date(2026, 9, 1), 1, 0, {}, 'plan')
+    plan = create_daily_plan(database, date(2026, 9, 11), 1, 0, {}, 'plan')
     task = plan['tasks'][0]['id']
     now = datetime(2026, 9, 10, 16, 30, tzinfo=UTC)
+    monkeypatch.setattr('app.services.practice.local_today', lambda: date(2026, 9, 11))
     session = start_session(database, task, now)
     add_turn(database, session, 'assistant', 'Question', now-timedelta(days=1))
     start_attempt(database, task, 'daily', now)
@@ -116,6 +118,23 @@ def test_alignment_tracks_details_and_keeps_completed_history(database, monkeypa
     assert again['changes']['unchanged'] == 1
 
 
+def test_source_inventory_orders_tree_and_ignores_table_cell_headings(database):
+    add_source(database)
+    raw = [
+        heading('inside-cell', 4, 'Not a module'),
+        {'block_id': 'cell', 'block_type': 32, 'children': ['inside-cell']},
+        {'block_id': 'table', 'block_type': 31, 'children': ['cell'],
+         'table': {'property': {'row_size': 1, 'column_size': 1}}},
+        heading('question', 3, 'Why?'),
+        {**heading('module', 1, 'Agent'), 'children': ['question', 'table']},
+    ]
+    publish_snapshot(database, 'source-code', '1', '1', raw, [], 'tree-v1')
+
+    modules = source_inventory(database, 'source-code')['modules']
+
+    assert modules == {'module': 'Agent', 'question': 'Agent > Why?'}
+
+
 def test_ambiguous_absence_suspends_without_deleting_history(database):
     add_source(database)
     publish_snapshot(database, 'source-code', '1', '1', blocks(), [draft()], 'v1')
@@ -129,7 +148,7 @@ def test_ambiguous_absence_suspends_without_deleting_history(database):
 
 def test_alignment_includes_model_analysis_and_persists_failure(database, monkeypatch):
     live_theory(database)
-    result = run_live(database, monkeypatch, 1, [heading('q', 1, 'Why?'), text_block('r', 'Reference')])
+    result = run_live(database, monkeypatch, 1, [heading('q', 3, 'Why?'), text_block('r', 'Reference')])
     def reply(messages, **kwargs):
         payload = json.loads(messages[1]['content'])
         suggestions = [{'anchor_id': item['anchor_id'], 'decision': 'single', 'reason': 'one question', 'parts': []} for item in payload['candidates']]
@@ -142,12 +161,13 @@ def test_alignment_includes_model_analysis_and_persists_failure(database, monkey
     validate_suggestions({'candidates': [{'anchor_id': 'q'}]}, {'suggestions': [{'anchor_id': 'q', 'decision': 'single', 'reason': 'source', 'parts': []}]})
 
 
-def test_day_details_distinguishes_cannot_and_pending_theory(database):
+def test_day_details_distinguishes_cannot_and_pending_theory(database, monkeypatch):
     from app.services.practice import submit_theory
     from tests.test_practice_review import seed_question
     seed_question(database, 'code')
     seed_question(database, 'theory')
     now = datetime(2026, 9, 12, 8, tzinfo=UTC)
+    monkeypatch.setattr('app.services.practice.local_today', lambda: now.date())
     plan = create_daily_plan(database, now.date(), 1, 1, {}, 'mixed')
     for task in plan['tasks']:
         start_attempt(database, task['id'], 'daily', now)
@@ -161,11 +181,12 @@ def test_day_details_distinguishes_cannot_and_pending_theory(database):
     assert groups['can'] == groups['unknown'] == []
 
 
-def test_day_details_uses_only_adopted_theory_verdict(database):
+def test_day_details_uses_only_adopted_theory_verdict(database, monkeypatch):
     from app.services.practice import adopt_theory_evaluation, submit_theory
     from tests.test_practice_review import seed_question
     seed_question(database, 'theory')
     now = datetime(2026, 9, 12, 8, tzinfo=UTC)
+    monkeypatch.setattr('app.services.practice.local_today', lambda: now.date())
     task = create_daily_plan(database, now.date(), 0, 1, {}, 'verdicts')['tasks'][0]['id']
     start_attempt(database, task, 'daily', now)
     saved = submit_theory(database, Submission(task, 'answer', now, 'daily', answer_text='Saved answer'))
@@ -179,7 +200,7 @@ def test_day_details_uses_only_adopted_theory_verdict(database):
 
 def test_alignment_retries_malformed_json_only_once(database, monkeypatch):
     live_theory(database)
-    result = run_live(database, monkeypatch, 1, [heading('q', 1, 'Why?'), text_block('r', 'Reference')])
+    result = run_live(database, monkeypatch, 1, [heading('q', 3, 'Why?'), text_block('r', 'Reference')])
     calls = []
     def reply(messages, **kwargs):
         calls.append(messages)
@@ -195,21 +216,21 @@ def test_every_click_refreshes_but_inflight_clicks_deduplicate(database, monkeyp
     add_source(database)
     started, release = Event(), Event()
     calls = []
-    def fake(location, source_id):
+    def fake(location, source_id, run_id, change_note=''):
         calls.append(source_id)
         started.set()
         assert release.wait(5)
     monkeypatch.setattr('app.services.source_refresh._refresh', fake)
-    queue_source_refresh(database, force=True)
+    queue_source_refresh(database, force=True, request_key='refresh-first')
     assert started.wait(2)
-    queue_source_refresh(database, force=True)
+    queue_source_refresh(database, force=True, request_key='refresh-alias')
     assert source_status(database)[0]['running']
     assert calls == ['source-code']
     release.set()
     from app.services.source_refresh import _jobs
     key = (database.execute('PRAGMA database_list').fetchone()[2], 'source-code')
     _jobs[key].result(timeout=2)
-    queue_source_refresh(database, force=True)
+    queue_source_refresh(database, force=True, request_key='refresh-second')
     _jobs[key].result(timeout=2)
     assert calls == ['source-code', 'source-code']
 

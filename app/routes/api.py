@@ -14,18 +14,25 @@ from app.services.bootstrap import register_initial_sources
 from app.services.free_practice import add_free_practice
 from app.services.free_requests import ORIGINAL_LIMIT, VARIANT_LIMIT, free_cards
 from app.services.learning_clock import local_today
+from app.services.materials import material_closure, materials_for_role
 from app.services.model_jobs import ModelJobError
 from app.services.plan_editing import update_daily_plan
 from app.services.practice import (
     add_theory_to_review,
     expose_answer,
+    set_mastery_level,
     start_attempt,
     submit_code,
     submit_theory,
+    submit_unable,
 )
 from app.services.practice_selection import select_by_description
 from app.services.review_tasks import _get_or_create_plan, start_review_task
-from app.services.source_refresh import queue_source_refresh, source_status
+from app.services.source_refresh import (
+    alignment_request_status,
+    queue_source_refresh,
+    source_status,
+)
 from app.services.sources import inspect_and_register_source
 from app.services.tasks import IdempotencyConflictError, create_daily_plan, fill_daily_plan
 from app.storage.dependencies import get_database
@@ -46,13 +53,18 @@ class PlanRequest(BaseModel):
     code_target: int = Field(ge=0, le=100)
     theory_target: int = Field(ge=0, le=100)
     module_quotas: dict[str, int] = Field(default_factory=dict)
+    theory_scope: list[str] | None = None
+    theory_catalog_version: str | None = Field(None, max_length=100)
     expected_state: dict | None = None
     fresh_batch: bool = False
+    adopt_legacy: bool = False
     expected_batch: str | None = Field(None, max_length=200)
 
 
 class FillRequest(BaseModel):
     module_quotas: dict[str, int] | None = None
+    theory_scope: list[str] | None = None
+    theory_catalog_version: str | None = Field(None, max_length=100)
 
 
 class StartRequest(BaseModel):
@@ -69,12 +81,24 @@ class CodeSubmissionRequest(BaseModel):
     entry_mode: str
     code_self_result: Literal["can_solve", "cannot_solve"]
     note: str | None = Field(default=None, max_length=20000)
+    mastery_level: Literal['unknown', 'vague', 'partial'] | None = None
 
 
 class TheorySubmissionRequest(BaseModel):
     submitted_at: datetime
     entry_mode: str
     answer_text: str = Field(min_length=1, max_length=30000)
+
+
+class UnableSubmissionRequest(BaseModel):
+    submitted_at: datetime
+    entry_mode: str
+    mastery_level: Literal['unknown', 'vague', 'partial']
+
+
+class MasteryRequest(BaseModel):
+    mastery_level: Literal['unknown', 'vague', 'partial']
+    expected_mastery_id: str | None
 
 
 class ReviewRequest(BaseModel):
@@ -190,9 +214,13 @@ def bootstrap_sources(database: Database):
 
 
 @router.post("/sources/{source_id}/sync")
-def sync_source(source_id: str, database: Database, body: AlignmentRequest | None = None):
+def sync_source(source_id: str, database: Database, idempotency_key: RequestKey,
+                body: AlignmentRequest | None = None):
     try:
-        return queue_source_refresh(database, source_id, force=True, change_note=body.change_note if body else '')
+        return queue_source_refresh(database, source_id, force=True,
+                                    change_note=body.change_note if body else '', request_key=idempotency_key)
+    except IdempotencyConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -202,9 +230,21 @@ def read_source_status(database: Database):
     return {"sources": source_status(database)}
 
 
+@router.get('/alignment-requests/{request_key}')
+def read_alignment_request(request_key: str, database: Database):
+    try:
+        return alignment_request_status(database, request_key)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
 @router.post("/sources/align-all")
-def align_all(database: Database, body: AlignmentRequest | None = None):
-    return queue_source_refresh(database, force=True, change_note=body.change_note if body else '')
+def align_all(database: Database, idempotency_key: RequestKey, body: AlignmentRequest | None = None):
+    try:
+        return queue_source_refresh(database, force=True, change_note=body.change_note if body else '',
+                                    request_key=idempotency_key)
+    except IdempotencyConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get('/day-status')
@@ -219,14 +259,21 @@ def edit_plan(plan_id: str, body: PlanRequest, database: Database,
     if not plan or plan[0] != body.plan_date.isoformat():
         raise HTTPException(409, '只可调整今天的计划，历史计划保留')
     try:
+        if body.adopt_legacy:
+            from app.services.current_practice import adopt_legacy_daily_batch
+            if not idempotency_key or not body.expected_batch:
+                raise ValueError('采用旧题单需要请求标识，请刷新后重试')
+            return adopt_legacy_daily_batch(database, body.plan_date, idempotency_key, body.expected_batch)
         if body.fresh_batch:
             from app.services.current_practice import draw_daily_batch
             if not idempotency_key:
                 raise ValueError('新题单需要请求标识，请刷新后重试')
             return draw_daily_batch(database, body.plan_date, body.code_target, body.theory_target,
-                                    body.module_quotas, idempotency_key, body.expected_batch)
+                                    body.module_quotas, idempotency_key, body.expected_batch,
+                                    body.theory_scope, body.theory_catalog_version)
         return update_daily_plan(database, plan_id, body.code_target, body.theory_target, body.module_quotas,
-                                 idempotency_key, body.expected_state, local_today())
+                                 idempotency_key, body.expected_state, local_today(),
+                                 body.theory_scope, body.theory_catalog_version)
     except (ValueError, IdempotencyConflictError) as error:
         raise HTTPException(409, str(error)) from error
 
@@ -235,7 +282,9 @@ def edit_plan(plan_id: str, body: PlanRequest, database: Database,
 def fill_plan(plan_id: str, database: Database, body: FillRequest | None = None):
     _require_today_plan(database, plan_id)
     try:
-        return fill_daily_plan(database, plan_id, body.module_quotas if body else None)
+        return fill_daily_plan(database, plan_id, body.module_quotas if body else None,
+                               body.theory_scope if body else None,
+                               body.theory_catalog_version if body else None)
     except ValueError as error:
         raise HTTPException(409, str(error)) from error
 
@@ -250,7 +299,8 @@ def create_plan(
         if body.fresh_batch:
             from app.services.current_practice import draw_daily_batch
             return draw_daily_batch(database, body.plan_date, body.code_target, body.theory_target,
-                                    body.module_quotas, idempotency_key, body.expected_batch)
+                                    body.module_quotas, idempotency_key, body.expected_batch,
+                                    body.theory_scope, body.theory_catalog_version)
         result = create_daily_plan(
             database,
             body.plan_date,
@@ -259,6 +309,8 @@ def create_plan(
             body.module_quotas,
             idempotency_key,
             required_date=local_today(),
+            theory_scope=body.theory_scope,
+            theory_catalog_version=body.theory_catalog_version,
         )
         return {**result, "freshness": {"used_cache": True, "sources": source_status(database), "refreshing": []}}
     except (ValueError, IdempotencyConflictError) as error:
@@ -293,6 +345,12 @@ def restore_today(database: Database):
     return {'batch': restore_daily(database)}
 
 
+@router.get('/practice/current')
+def current_today(database: Database):
+    from app.services.current_practice import restore_daily
+    return {'batch': restore_daily(database)}
+
+
 @router.post("/attempts/{attempt_id}/evaluation")
 def correct_evaluation(attempt_id: str, body: EvaluationCorrection, database: Database, idempotency_key: RequestKey):
     attempt = database.execute("SELECT a.id FROM attempt a JOIN task t ON t.id=a.task_id "
@@ -319,7 +377,8 @@ def mark_answer_exposed(task_id: str, body: ExposureRequest, database: Database)
     materials = json.loads(resource[0]) if resource else []
     return {"attempt_id": attempt_id, "answer_exposed": True, "reference_text": row["reference_text"],
             'reference_correction': get_correction(database, row['id']), 'reference_verification': verification(database, row['id']),
-            "materials": [item for item in materials if item["role"] == "reference"]}
+            "materials": [item for item in materials
+                          if isinstance(item, dict) and item.get("role") == "reference"]}
 
 
 @router.get("/tasks/{task_id}/materials/{block_id}")
@@ -327,7 +386,10 @@ def task_material(task_id: str, block_id: str, request: Request, database: Datab
     row = database.execute("SELECT r.materials_json FROM task t JOIN version_resources r "
                            "ON r.version_id=t.question_version_id WHERE t.id=?", (task_id,)).fetchone()
     items = json.loads(row[0]) if row else []
-    item = next((item for item in items if item["block_id"] == block_id and item["status"] == "complete"), None)
+    item = next((item for item in material_closure(items)
+                 if item.get("block_id") == block_id and item.get("status") == "complete"
+                 and (item.get('kind') in {'media', 'sheet'}
+                      or (not item.get('kind') and item.get('path')))), None)
     if item is None:
         raise HTTPException(404, "material not found")
     if item["role"] == "reference" and not database.execute(
@@ -338,7 +400,58 @@ def task_material(task_id: str, block_id: str, request: Request, database: Datab
     path = (root / item["path"]).resolve()
     if path.parent != root.resolve() or not path.is_file():
         raise HTTPException(404, "archived material is missing")
+    if item["role"] == "reference":
+        # A saved media URL is not a permanent authorization. Record every
+        # successful answer-bearing fetch before returning the bytes.
+        expose_answer(database, task_id, datetime.now(UTC))
     return FileResponse(path, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
+def _version_resource(database, question_id: str, version_id: str):
+    row = database.execute(
+        'SELECT r.materials_json FROM question_version v '
+        'LEFT JOIN version_resources r ON r.version_id=v.id '
+        'WHERE v.id=? AND v.question_id=?',
+        (version_id, question_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, '题目版本不存在')
+    return json.loads(row[0]) if row[0] else []
+
+
+@router.get('/questions/{question_id}/versions/{version_id}/prompt-materials')
+def question_prompt_materials(question_id: str, version_id: str, database: Database):
+    """Prompt structure is safe to load without exposing the saved answer."""
+    return {'materials': materials_for_role(
+        _version_resource(database, question_id, version_id), 'prompt'
+    )}
+
+
+@router.get('/questions/{question_id}/versions/{version_id}/materials/{block_id}')
+def question_version_material(question_id: str, version_id: str, block_id: str,
+                              request: Request, database: Database):
+    items = _version_resource(database, question_id, version_id)
+    item = next((value for value in material_closure(items)
+                 if value.get('block_id') == block_id and value.get('status') == 'complete'
+                 and value.get('role') in {'prompt', 'reference'}
+                 and (value.get('kind') in {'media', 'sheet'}
+                      or (not value.get('kind') and value.get('path')))), None)
+    if item is None:
+        raise HTTPException(404, 'material not found')
+    if item.get('role') == 'reference' and not database.execute(
+        'SELECT 1 FROM question_exposure WHERE question_id=?', (question_id,)
+    ).fetchone():
+        raise HTTPException(403, 'open the reference first')
+    root = Path(request.app.state.database_path).parent / 'media'
+    path = (root / item['path']).resolve()
+    if path.parent != root.resolve() or not path.is_file():
+        raise HTTPException(404, 'archived material is missing')
+    if item.get('role') == 'reference':
+        database.execute('INSERT OR IGNORE INTO question_exposure VALUES (?,?)',
+                         (question_id, datetime.now(UTC).isoformat()))
+        database.commit()
+    return FileResponse(path, headers={'Cache-Control': 'no-store',
+                                       'X-Content-Type-Options': 'nosniff'})
 
 
 @router.post("/questions/{question_id}/start-review")
@@ -363,6 +476,7 @@ def submit_code_answer(
         entry_mode=body.entry_mode,
         code_self_result=body.code_self_result,
         note=body.note,
+        mastery_level=body.mastery_level,
     )
     return submit_code(database, submission)
 
@@ -382,6 +496,25 @@ def submit_theory_answer(
         answer_text=body.answer_text,
     )
     return submit_theory(database, submission)
+
+
+@router.post('/tasks/{task_id}/unable-submit')
+def submit_unable_answer(task_id: str, body: UnableSubmissionRequest,
+                         idempotency_key: RequestKey, database: Database):
+    return submit_unable(database, Submission(
+        task_id=task_id,
+        request_key=idempotency_key,
+        submitted_at=datetime.now(UTC),
+        entry_mode=body.entry_mode,
+        mastery_level=body.mastery_level,
+    ))
+
+
+@router.put('/tasks/{task_id}/mastery')
+def update_mastery(task_id: str, body: MasteryRequest,
+                   idempotency_key: RequestKey, database: Database):
+    return set_mastery_level(database, task_id, body.mastery_level,
+                             idempotency_key, body.expected_mastery_id)
 
 
 @router.post("/questions/{question_id}/review")

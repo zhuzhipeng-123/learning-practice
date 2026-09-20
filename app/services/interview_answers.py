@@ -1,5 +1,6 @@
 """Explicit access to stored interview references, including legacy answer completion."""
 
+import json
 from datetime import UTC, datetime
 
 from app.services.interview import InterviewError
@@ -48,6 +49,7 @@ def saved_reference(connection, context):
 
 
 def view_reference(connection, session_id, turn_id=None):
+    from app.services.materials import materials_for_role
     from app.services.reference_corrections import get_correction
     from app.services.reference_state import verification
     context = reference_context(connection, session_id, turn_id)
@@ -56,7 +58,15 @@ def view_reference(connection, session_id, turn_id=None):
         return {'available': False, 'message': '这是一道旧面试题，当时没有保存参考答案。可以为原问题补充一份答案。'}
     with transaction(connection):
         connection.execute('INSERT OR IGNORE INTO question_exposure VALUES (?,?)', (context['question_id'], datetime.now(UTC).isoformat()))
+    materials = []
+    if not turn_id:
+        resource = connection.execute('SELECT materials_json FROM version_resources WHERE version_id=?',
+                                      (context['question_version_id'],)).fetchone()
+        stored = json.loads(resource[0]) if resource else []
+        materials = materials_for_role(stored, 'reference')
     return {'available': True, 'question': context['question'], 'reference_text': reference, 'model_generated': generated,
+            'materials': materials, 'question_id': context['question_id'],
+            'question_version_id': context['question_version_id'],
             'reference_correction': get_correction(connection, context['question_version_id']) if not turn_id else None,
             'reference_verification': verification(connection, context['question_version_id']) if not turn_id else {'verified': False}}
 

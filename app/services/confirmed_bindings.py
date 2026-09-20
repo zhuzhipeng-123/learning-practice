@@ -6,12 +6,13 @@ from difflib import SequenceMatcher
 
 from app.domain import QuestionDraft
 from app.parsers.block_tree import ordered_blocks
-from app.parsers.docx import HEADING_TYPES, block_text, is_theory_heading
+from app.parsers.docx import block_text, classify_theory_headings, heading_level
 
 
 def rebuild_bindings(connection, source, blocks, parsed):
     blocks = ordered_blocks(blocks)
     by_id = {block["block_id"]: block for block in blocks}
+    theory_roles = classify_theory_headings(blocks).roles if source['question_type'] == 'theory' else {}
     discovered = {draft.main_anchor_block_id: draft for draft in [*parsed.published, *parsed.candidates]}
     known = connection.execute(
         "SELECT b.*,v.category_path FROM source_binding b JOIN question q ON q.id=b.question_id "
@@ -23,10 +24,19 @@ def rebuild_bindings(connection, source, blocks, parsed):
         anchor = binding["main_anchor_block_id"]
         if anchor not in by_id:
             continue
-        if source['question_type'] == 'theory' and not is_theory_heading(by_id[anchor]):
+        if source['question_type'] == 'theory' and theory_roles.get(anchor) not in {'question', 'ambiguous_question'}:
             continue
         current = discovered.get(anchor)
         if current and current.material_status == 'incomplete_reference':
+            invalid.add(anchor)
+            continue
+        prompt_ids = json.loads(binding["prompt_block_ids_json"])
+        reference_ids = json.loads(binding["reference_block_ids_json"])
+        if current and current.confirmation_status != 'confirmed' and (
+            tuple(prompt_ids) != current.prompt_block_ids or tuple(reference_ids) != current.reference_block_ids
+        ):
+            # A new parser ambiguity must not silently revive an old automatic or
+            # manual span whose image/answer roles now conflict with the source.
             invalid.add(anchor)
             continue
         # Recompute clear source boundaries so appended/deleted reference blocks are reflected.
@@ -34,8 +44,6 @@ def rebuild_bindings(connection, source, blocks, parsed):
         if current and current.confirmation_status == "confirmed":
             confirmed.append(current)
             continue
-        prompt_ids = json.loads(binding["prompt_block_ids_json"])
-        reference_ids = json.loads(binding["reference_block_ids_json"])
         if not all(key in by_id for key in [*prompt_ids, *reference_ids]):
             invalid.add(anchor)
             continue
@@ -43,7 +51,7 @@ def rebuild_bindings(connection, source, blocks, parsed):
         if len(reference_ids) > 1:
             indexes = [index for index, block in enumerate(blocks) if block["block_id"] in reference_ids]
             span = blocks[min(indexes):max(indexes) + 1]
-            if any(block.get("block_type") in HEADING_TYPES and not block.get('_reference_container') for block in span):
+            if any(heading_level(block) in {1, 2, 3} for block in span):
                 invalid.add(anchor)
                 continue
             reference_ids = [block["block_id"] for block in span]
@@ -61,7 +69,7 @@ def rebuild_bindings(connection, source, blocks, parsed):
 def _category(blocks, anchor):
     path = {}
     for block in blocks:
-        level = None if block.get('_reference_container') else HEADING_TYPES.get(block.get("block_type"))
+        level = heading_level(block)
         if level:
             path = {key: value for key, value in path.items() if key < level}
             path[level] = block_text(block)

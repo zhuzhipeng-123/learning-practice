@@ -6,6 +6,8 @@
   const decisions = {single:'单题 / 多种解法',split:'建议拆题',note:'知识笔记',missing:'资料不足'};
   let timer, watching = false, polling = false, repoll = false, sources = [];
   const submitting = new Set();
+  const requestSlot = id => `learning-alignment-${id || 'all'}`;
+  const pendingFor = id => learningStore.get(requestSlot(id));
   function updateButtons() {
     buttons.forEach(button => {
       const id = button.dataset.alignSource;
@@ -25,12 +27,15 @@
       if (summary.change_note) line(box,'p',`你的改动说明：${summary.change_note}`);
       if (summary.user_review) {line(box,'p',`模型复核：${summary.user_review.review}`); for (const item of summary.user_review.unresolved || []) line(box,'p',`待核验：${item}`);}
       if (summary.review_error) line(box,'p',`原文对齐已保留，模型复核未完成：${summary.review_error}`);
-      line(box,'h4',`${source.question_type==='theory'?'八股':'代码'} · ${source.running ? '正在对齐…' : source.sync_status==='failed' ? '读取失败' : '最近一次对齐结果'}`);
+      const failureLabels={discovery:'目录读取失败',documents:'文档处理失败',aggregation:'结果汇总失败',review:'改动复核失败',finalization:'结果保存失败'};
+      const failedLabel=failureLabels[summary.failure_stage] || '对齐失败';
+      line(box,'h4',`${source.question_type==='theory'?'八股':'代码'} · ${source.running ? '正在对齐…' : source.sync_status==='failed' ? failedLabel : '最近一次对齐结果'}`);
       if (source.last_check_at) line(box,'p',`检查时间：${new Date(source.last_check_at).toLocaleString()}`);
       if (source.last_error && !summary.documents?.length) line(box,'p',source.last_error);
       if (summary.phase) {
         line(box,'p',`目录遍历：${summary.tree_complete ? '已完整读取可访问的目录树' : '尚未完成 / 有缺项'}；发现 ${summary.discovered_nodes || 0} 个节点。`);
         for (const error of summary.tree_errors || []) line(box,'p',`${error.path}：${error.error}`);
+        for (const error of summary.stage_errors || []) line(box,'p',`${failureLabels[error.stage] || '对齐失败'}：${error.error}`);
         const docs=summary.documents || [];
         line(box,'p',`文档进度：${docs.filter(item=>['complete','partial','failed'].includes(item.status)).length} / ${docs.length}。${summary.phase==='discovery' ? '正在递归查找所有子目录…' : ''}`);
         const dc=summary.document_changes || {};
@@ -77,9 +82,26 @@
     try {
       const data=await requestJSON('/api/source-status');
       sources = data.sources; updateButtons();
-      const running=data.sources.some(source=>source.running);
+      let running=data.sources.some(source=>source.running), recoverable=false;
+      for (const button of buttons) {
+        const pending=pendingFor(button.dataset.alignSource);
+        if (!pending) continue;
+        try {
+          const state=await requestJSON(`/api/alignment-requests/${encodeURIComponent(pending.key)}`);
+          if (state.terminal) {
+            if (pendingFor(button.dataset.alignSource)?.key===pending.key) learningStore.remove(requestSlot(button.dataset.alignSource));
+          } else if (state.status==='recoverable') recoverable=true;
+          else running=true;
+        } catch(error) {
+          if (error.status!==404) line(output,'p',`恢复对齐状态失败：${error.message}`);
+        }
+      }
       if (watching || running) render(data.sources);
       if (running) { watching=true;timer=setTimeout(poll,2000); }
+      else if (recoverable) {
+        watching=false;
+        line(output,'p','服务曾中断，这轮对齐已保留。点击原按钮可按同一请求继续，不会新建一轮。');
+      }
       else if (watching) {
         watching=false;
         line(output,'p','本轮对齐已结束。历史任务、作答和评价保持原样。');
@@ -91,16 +113,30 @@
     } finally { polling = false; if (repoll) { repoll = false; clearTimeout(timer); timer = setTimeout(poll, 0); } }
   }
   buttons.forEach(button=>button.addEventListener('click',async()=>{
-    submitting.add(button.dataset.alignSource); updateButtons(); output.hidden=false;
+    const id=button.dataset.alignSource, path=id ? `/api/sources/${id}/sync` : '/api/sources/align-all';
+    const values={change_note:document.querySelector('#alignment-note')?.value || ''};
+    let pending=pendingFor(id);
+    if (pending && (pending.path!==path || JSON.stringify(pending.values)!==JSON.stringify(values))) {
+      output.hidden=false;line(output,'p','上次对齐结果还未确认，请先使用原改动说明恢复该轮。');return;
+    }
+    if (!pending) {
+      pending={key:crypto.randomUUID(),path,values};learningStore.set(requestSlot(id),pending);
+    }
+    submitting.add(id); updateButtons(); output.hidden=false;
     line(output,'p','已请求重新对齐：本次会读取最新内容，并分析待确认的题目边界…');
     try {
       clearTimeout(timer);
-      await requestJSON(button.dataset.alignSource ? `/api/sources/${button.dataset.alignSource}/sync` : '/api/sources/align-all',{method:'POST',headers:{'X-Requested-With':'learning-practice','Content-Type':'application/json'},body:JSON.stringify({change_note:document.querySelector('#alignment-note')?.value || ''})});
+      await requestJSON(pending.path,{method:'POST',headers:{'X-Requested-With':'learning-practice','Content-Type':'application/json','Idempotency-Key':pending.key},body:JSON.stringify(pending.values)});
       watching=true;await poll();
-    } catch(error) { line(output,'p',error.message); }
-    finally { submitting.delete(button.dataset.alignSource); updateButtons(); }
+    } catch(error) {
+      if (error.definitelyRejected && pendingFor(id)?.key===pending.key) learningStore.remove(requestSlot(id));
+      line(output,'p',error.message);
+      if (!error.definitelyRejected) {watching=true;await poll();}
+    }
+    finally { submitting.delete(id); updateButtons(); }
   }));
   const history=document.querySelector('#show-alignment-result');
   history?.addEventListener('click',async()=>{try {render((await requestJSON('/api/source-status')).sources);}catch(error){output.hidden=false;output.textContent=error.message;}});
+  if (buttons.some(button=>pendingFor(button.dataset.alignSource))) watching=true;
   poll();
 })();

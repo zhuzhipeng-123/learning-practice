@@ -14,6 +14,7 @@ from app.storage.transactions import atomic
 
 @atomic
 def read_knowledge(connection, question_id, version_id=None):
+    from app.services.materials import materials_for_role
     row = connection.execute('SELECT v.*,q.source_kind FROM question q JOIN question_version v '
         'ON v.id=COALESCE(?,q.current_version_id) AND v.question_id=q.id WHERE q.id=?',
         (version_id, question_id)).fetchone()
@@ -21,10 +22,15 @@ def read_knowledge(connection, question_id, version_id=None):
         raise ValueError('题目版本不存在')
     connection.execute('INSERT OR IGNORE INTO question_exposure VALUES (?,?)',
                        (question_id, datetime.now(UTC).isoformat()))
+    resource = connection.execute('SELECT materials_json FROM version_resources WHERE version_id=?',
+                                  (row['id'],)).fetchone()
+    materials = json.loads(resource[0]) if resource else []
     return {'question_id': question_id, 'version_id': row['id'], 'prompt': row['prompt'],
             'reference_text': row['reference_text'] or '', 'category_path': row['category_path'],
             'editable': row['source_kind'] == 'derived', 'reference_verification': verification(connection, row['id']),
-            'reference_correction': get_correction(connection, row['id'])}
+            'reference_correction': get_correction(connection, row['id']),
+            'prompt_materials': materials_for_role(materials, 'prompt'),
+            'reference_materials': materials_for_role(materials, 'reference')}
 
 
 @atomic

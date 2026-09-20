@@ -2,8 +2,13 @@ const card = document.querySelector("[data-task-id]");
 const result = document.querySelector("#result");
 const taskId = card.dataset.taskId;
 const storageKey = `learning-submit-${taskId}`;
-const questionText = document.querySelector('#generated-question');
-if (questionText) renderModelText(questionText, questionText.textContent);
+const questionText = document.querySelector('#question-content');
+const questionFallback = questionText.textContent;
+if (card.dataset.variant === 'true') renderModelText(questionText, questionFallback);
+requestJSON(`/api/questions/${card.dataset.questionId}/versions/${card.dataset.questionVersion}/prompt-materials`)
+  .then(data => learningMaterials.render(questionText, data.materials,
+    blockId => `/api/tasks/${taskId}/materials/${encodeURIComponent(blockId)}`, questionFallback))
+  .catch(() => { /* The frozen plain-text prompt remains usable. */ });
 const draft = bindDraft(document.querySelector('#answer,#note'), `learning-draft-${taskId}`);
 // A recovered older submission must not erase edits made after its response was lost.
 const remainingDraft = learningStore.get(`learning-draft-${taskId}`);
@@ -54,7 +59,7 @@ async function ensureStarted() {
 // Opening an unstarted practice freezes its version; explicit redraws can retire it.
 if (card.dataset.taskStatus === 'pending') ensureStarted().catch(error => show(error.message));
 
-async function submit(path, values) {
+async function submit(path, values, preserveDraft=false) {
   if ('answer_text' in values && !values.answer_text.trim()) {
     show('请先填写回答，再保存。');
     return;
@@ -66,7 +71,7 @@ async function submit(path, values) {
     const old = learningStore.get(storageKey);
     await savedRequest(storageKey, path, {...values, entry_mode:'web',
       submitted_at:old?.values.submitted_at || new Date().toISOString()});
-    draft.clear(values.answer_text ?? values.note);
+    if (!preserveDraft) draft.clear(values.answer_text ?? values.note);
     location.reload();
   } catch (error) {
     show(error.definitelyRejected ? `没有保存：${error.message}` : `提交未确认：${error.message}`);
@@ -76,7 +81,7 @@ async function submit(path, values) {
         retry.disabled = true;
         try {
           await savedRequest(storageKey, error.pending.path, error.pending.values);
-          draft.clear(error.pending.values.answer_text ?? error.pending.values.note);
+          if (!preserveDraft) draft.clear(error.pending.values.answer_text ?? error.pending.values.note);
           location.reload();
         }
         catch (failure) { show(failure.message); }
@@ -90,13 +95,40 @@ async function submit(path, values) {
 }
 
 for (const button of document.querySelectorAll("[data-code-result]")) {
-  button.addEventListener("click", () => submit(`/api/tasks/${taskId}/code-submit`, {
-    code_self_result: button.dataset.codeResult, note: document.querySelector("#note").value
-  }));
+  button.addEventListener("click", () => {
+    const level = document.querySelector('#mastery-level')?.value || null;
+    if (button.dataset.codeResult === 'cannot_solve' && !level) { show('请先选择当前掌握程度。'); return; }
+    submit(`/api/tasks/${taskId}/code-submit`, {
+      code_self_result: button.dataset.codeResult, note: document.querySelector("#note").value,
+      mastery_level: button.dataset.codeResult === 'cannot_solve' ? level : null
+    });
+  });
 }
 document.querySelector("#submit-theory")?.addEventListener("click", () => submit(
   `/api/tasks/${taskId}/theory-submit`, {answer_text: document.querySelector("#answer").value}
 ));
+document.querySelector('#submit-unable')?.addEventListener('click', () => {
+  const level = document.querySelector('#mastery-level')?.value;
+  if (!level) { show('请先选择当前掌握程度。'); return; }
+  submit(`/api/tasks/${taskId}/unable-submit`, {mastery_level:level}, true);
+});
+
+actionMastery();
+
+function actionMastery() {
+  const button=document.querySelector('#save-mastery'), select=document.querySelector('#mastery-edit');
+  if (!button || !select) return;
+  button.addEventListener('click', async () => {
+    const unlock=lockControls([button,select]);
+    try {
+      await savedRequest(`learning-mastery-${taskId}`, `/api/tasks/${taskId}/mastery`, {
+        mastery_level:select.value, expected_mastery_id:select.dataset.currentId || null
+      }, 'PUT');
+      location.reload();
+    } catch(error) { show(error.definitelyRejected ? `没有保存：${error.message}` : `保存结果未确认：${error.message}`); }
+    finally { unlock(); }
+  });
+}
 
 function action(selector, operation) {
   const button = document.querySelector(selector);
@@ -121,10 +153,15 @@ action("#show-reference", async () => {
   await ensureStarted();
   const data = await request(`/api/tasks/${taskId}/expose-answer`, {exposed_at: new Date().toISOString()});
   const reference = document.querySelector("#reference-text");
-  if (card.dataset.variant === 'true') renderModelText(reference, data.reference_text || '参考材料不足');
-  else reference.textContent = data.reference_text || '参考材料不足';
   const media = document.querySelector("#reference-media");
   media.replaceChildren();
+  const rendered = learningMaterials.render(reference, data.materials,
+    blockId => `/api/tasks/${taskId}/materials/${encodeURIComponent(blockId)}`,
+    data.reference_text || '参考材料不足');
+  if (!rendered) {
+    if (card.dataset.variant === 'true') renderModelText(reference, data.reference_text || '参考材料不足');
+    else reference.textContent = data.reference_text || '参考材料不足';
+  }
   if (data.reference_correction) {
     const correction = document.createElement('section'), title = document.createElement('h4'), text = document.createElement('div');
     title.textContent = '本版本的参考校正'; text.textContent = data.reference_correction.content;
@@ -136,7 +173,7 @@ action("#show-reference", async () => {
     media.append(correction);
   }
   for (const item of data.materials) {
-    if (item.kind !== "media" || item.status !== "complete") continue;
+    if (rendered || item.kind !== "media" || item.status !== "complete") continue;
     const img = document.createElement("img");
     img.src = `/api/tasks/${taskId}/materials/${encodeURIComponent(item.block_id)}`;
     img.alt = "参考原图";
@@ -191,12 +228,6 @@ function evaluationText(value) {
   }
   return `${labels[value.verdict] || value.verdict}${value.adopted ? '（当前采用）' : '（保留记录）'}${value.corrected_by_user ? ' · 人工评价' : ''}\n${feedback}`;
 }
-action('#toggle-classic', async button => {
-  const data = await request(`/api/questions/${card.dataset.questionId}/classic`, {is_classic:button.dataset.classic !== 'true'});
-  button.dataset.classic = String(data.is_classic);
-  button.textContent = data.is_classic ? '取消经典标记' : '标为经典面试题';
-  show(data.is_classic ? '已标为经典，可从秋招的经典题练习抽取。' : '已取消经典标记。');
-});
 action("#show-saved", async () => {
   const data = await request(`/api/tasks/${taskId}/saved-answer`, {});
   show([data.answer_text, data.code_self_result === 'can_solve' ? '自评：会做' : data.code_self_result ? '自评：不会做' : '', data.note,

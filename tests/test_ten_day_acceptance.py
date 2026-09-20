@@ -43,11 +43,11 @@ TOPICS = [
 
 
 def source_reply(index):
-    raw = [text_block('module', 'Agent fundamentals' if index < 4 else 'Agent preparation', 3)]
+    raw = [text_block('module', 'Agent fundamentals' if index < 4 else 'Agent preparation', 4)]
     for number, (prompt, reference) in enumerate(TOPICS[:index+1]):
         if number == 0 and index >= 4:
             reference += ' 外部服务超时后应重用相同请求标识。'
-        raw.extend([text_block(f'q{number}', prompt, 4), text_block(f'r{number}', reference)])
+        raw.extend([text_block(f'q{number}', prompt, 5), text_block(f'r{number}', reference)])
     # Exercise actual pagination, revision check, parsing, identity binding and publication.
     midpoint = max(1, len(raw)//2)
     return FakeClient([

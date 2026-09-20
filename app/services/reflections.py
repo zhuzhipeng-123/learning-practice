@@ -90,7 +90,11 @@ def activity_timeline(
     start_at, end_at = utc_bounds_for_local_days(activity_date, activity_date)
     attempts = connection.execute(
         "SELECT a.id, a.task_id, a.submitted_at, a.code_self_result, a.answer_text, "
-        "a.note,v.prompt,v.category_path,t.origin, t.question_id FROM attempt a JOIN task t ON t.id=a.task_id "
+        "a.note,v.prompt,v.category_path,t.origin,t.question_id,"
+        "EXISTS(SELECT 1 FROM mastery_assessment ma WHERE ma.attempt_id=a.id) AS explicit_unable,"
+        "(SELECT ma.level FROM mastery_assessment ma WHERE ma.question_id=t.question_id "
+        "AND ma.review_basis_id=v.review_basis_id ORDER BY ma.rowid DESC LIMIT 1) AS mastery_level "
+        "FROM attempt a JOIN task t ON t.id=a.task_id "
         "JOIN question_version v ON v.id=a.question_version_id "
         "WHERE a.activity_date=? AND a.submitted_at IS NOT NULL ORDER BY a.submitted_at",
         (activity_date.isoformat(),),

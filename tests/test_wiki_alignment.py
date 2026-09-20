@@ -4,8 +4,11 @@ from types import SimpleNamespace
 from app.adapters.wiki_reader import read_wiki_tree
 from app.services.source_state import observe_missing_questions
 from app.services.sync import publish_snapshot
+from app.services.wiki_alignment import _aggregate, align_source_tree
 from app.services.wiki_sources import reconcile_tree, source_prefix
 from tests.helpers import add_source
+from tests.test_docx_parser import heading, text_block
+from tests.test_docx_reader import FakeClient
 from tests.test_sync import blocks, draft
 
 
@@ -86,3 +89,96 @@ def test_unsupported_child_is_reported_not_silently_skipped(database):
     child = {**node('sheet', kind='sheet'), 'path': 'root > sheet'}
     sources, report = reconcile_tree(database, root, {'nodes': [child], 'complete': True})
     assert not sources and report['unsupported'][0]['path'] == 'root > sheet'
+
+
+def test_aggregate_supports_empty_and_nonempty_excluded_changes():
+    summary = {'documents': [
+        {'result': {'candidate_count': 0, 'changes': {'excluded': []}}},
+        {'result': {'candidate_count': 0, 'changes': {'excluded': [{'id': 'question'}]}}},
+    ]}
+
+    _aggregate(summary)
+
+    assert summary['changes']['excluded'] == [{'id': 'question'}]
+    assert summary['changes']['added'] == []
+
+
+def test_alignment_combines_real_document_sync_and_aggregate(database):
+    add_source(database)
+    database.execute("UPDATE source SET question_type='theory' WHERE id='source-code'")
+    database.commit()
+    raw = [heading('module', 2, 'Agent'), heading('question', 3, 'Why use tools?'),
+           text_block('answer', 'Tools let a model act on external systems.')]
+    client = FakeClient([
+        {'document': {'revision_id': 1}},
+        {'items': raw, 'has_more': False},
+        {'document': {'revision_id': 1}},
+    ])
+
+    summary = align_source_tree(database, 'source-code', _no_analysis, client)
+
+    assert summary['phase'] == 'finished'
+    assert summary['documents'][0]['status'] == 'complete'
+    assert summary['changes']['excluded'] == []
+    assert database.execute('SELECT COUNT(*) FROM question').fetchone()[0] == 1
+
+
+def test_aggregate_failure_preserves_saved_document_and_reports_stage(database, monkeypatch):
+    add_source(database)
+    database.execute("UPDATE source SET question_type='theory' WHERE id='source-code'")
+    database.commit()
+    raw = [heading('module', 2, 'Agent'), heading('question', 3, 'Why use tools?'),
+           text_block('answer', 'Tools let a model act on external systems.')]
+    client = FakeClient([
+        {'document': {'revision_id': 1}},
+        {'items': raw, 'has_more': False},
+        {'document': {'revision_id': 1}},
+    ])
+    monkeypatch.setattr('app.services.source_sync.inventory_changes', lambda before, after: {'excluded': 1})
+
+    summary = align_source_tree(database, 'source-code', _no_analysis, client)
+
+    assert summary['phase'] == 'failed'
+    assert summary['failure_stage'] == 'aggregation'
+    assert summary['tree_errors'] == []
+    assert summary['stage_errors'][0]['stage'] == 'aggregation'
+    assert summary['documents'][0]['status'] == 'complete'
+    assert database.execute('SELECT COUNT(*) FROM question').fetchone()[0] == 1
+    assert database.execute('SELECT status FROM alignment_run').fetchone()[0] == 'failed'
+
+
+def test_mixed_documents_and_partial_tree_keep_safe_results_separate(database, monkeypatch):
+    add_source(database)
+    add_source(database, 'source-child')
+    database.execute("UPDATE source SET wiki_url='https://example.test/wiki/root' WHERE id='source-code'")
+    database.commit()
+    tree = {'complete': False, 'nodes': [], 'errors': [{'path': 'root > denied', 'error': 'denied'}]}
+    monkeypatch.setattr('app.services.wiki_alignment.read_wiki_tree', lambda *args: tree)
+    monkeypatch.setattr('app.services.wiki_alignment.reconcile_tree', lambda *args: (
+        {'source-code': 'root', 'source-child': 'root > child'},
+        {'added': [], 'moved': [], 'missing': [], 'restored': [], 'unsupported': []},
+    ))
+
+    def align_document(location, item, analyze, remote, model_unavailable):
+        if item['source_id'] == 'source-child':
+            item.update(status='failed', error='synthetic document failure')
+            return
+        item.update(status='partial', result={
+            'candidate_count': 1,
+            'changes': {'added': [{'id': 'safe-question'}]},
+            'analysis': {'status': 'partial', 'total': 1, 'processed': 0,
+                         'suggestions': [], 'errors': ['synthetic model failure']},
+        })
+
+    monkeypatch.setattr('app.services.wiki_alignment._align_document', align_document)
+    summary = align_source_tree(database, 'source-code', _no_analysis, SimpleNamespace())
+
+    assert summary['tree_errors'] == tree['errors']
+    assert summary['changes']['added'] == [{'id': 'safe-question'}]
+    assert summary['analysis']['errors'] == ['synthetic model failure']
+    assert next(item for item in summary['documents'] if item['source_id'] == 'source-child')['status'] == 'failed'
+    assert database.execute('SELECT status FROM alignment_run').fetchone()[0] == 'partial'
+
+
+def _no_analysis(connection, source_id, result):
+    return {'status': 'not_needed', 'total': 0, 'processed': 0, 'suggestions': [], 'errors': []}

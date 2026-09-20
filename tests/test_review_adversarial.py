@@ -24,6 +24,7 @@ from app.services.review_tasks import start_review_task
 from app.services.task_management import cancel_unstarted_task
 from app.services.tasks import create_daily_plan
 from app.storage.database import connect_database, initialize_database
+from tests.helpers import remove_migrations_after
 from tests.test_practice_review import make_plan, seed_question
 from tests.test_repair_sync import live_theory, run_live
 from tests.test_review_acceptance import text_block
@@ -186,7 +187,7 @@ def test_old_tasks_cancel_only_before_any_answer(database):
 
 def test_incomplete_update_cannot_reuse_old_complete_binding(database, monkeypatch):
     live_theory(database)
-    good = [text_block('module', 'Module', 3), text_block('question', 'Question?', 4), text_block('answer', 'A')]
+    good = [text_block('module', 'Module', 3), text_block('question', 'Question?', 5), text_block('answer', 'A')]
     run_live(database, monkeypatch, 1, good)
     question = database.execute('SELECT id FROM question').fetchone()[0]
     bad = [*good, {'block_id': 'essential-table', 'block_type': 999}]
@@ -222,6 +223,7 @@ def test_additive_migration_preserves_records_and_creates_backup(database):
     task = make_plan(database, 'theory')
     start_attempt(database, task['id'], 'web', NOW)
     submit_theory(database, Submission(task['id'], 'submitted', NOW, 'web', answer_text='Preserved history'))
+    remove_migrations_after(database, 8)
     database.execute('DROP TABLE interview_derivation')
     database.execute('DROP TABLE free_practice_batch')
     database.execute('DROP TABLE reference_correction')

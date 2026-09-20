@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% block title %}面试会话 · 学习练习{% endblock %}
 {% block content %}
-<section class="interview-room" data-session-id="{{ session.id }}" data-question-id="{{ session.question_id }}" data-session-status="{{ session.status }}">
+<section class="interview-room" data-session-id="{{ session.id }}" data-question-id="{{ session.question_id }}" data-question-version="{{ session.question_version_id }}" data-session-status="{{ session.status }}">
 <div class="section-heading"><p class="eyebrow">秋招 · 连续面试</p><span id="interview-state" class="tag">会话状态：{{ '进行中' if session.status == 'active' else '已结束' }}</span></div>
 <p class="muted">从这一问开始，沿着你的回答继续聊。</p>
-<h2 data-main-question>{{ session.prompt }}</h2>
+<h2>主问题</h2><div data-main-question class="prose question-content" style="white-space:pre-wrap">{{ session.prompt }}</div>
 <p class="muted">已保存 <span id="interview-turn-count">{{ turns|length }}</span> 条对话。可以直接回答、补充想法，也可以说哪里没懂、希望换个相关考点。</p>
 <div class="interview-transcript" aria-label="面试对话">
 <div id="saved-dialogue"></div>

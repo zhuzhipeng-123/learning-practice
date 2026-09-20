@@ -10,7 +10,8 @@ from fastapi.testclient import TestClient
 from app.adapters.lark_cli import LarkCliClient, LarkCliPermissionError
 from app.main import app
 from app.services.model_jobs import ModelJobError, run_evaluation_job
-from app.services.practice import add_theory_to_review
+from app.services.practice import add_theory_to_review, expose_answer, start_attempt
+from app.services.review import exposed_recently
 from app.services.review_tasks import start_review_task
 from app.services.source_sync import SyncSupersededError, sync_registered_source
 from app.services.tasks import create_daily_plan
@@ -22,6 +23,43 @@ from tests.test_repair_business import submitted_theory
 from tests.test_repair_sync import live_theory, run_live
 
 HEADERS = {"X-Requested-With": "learning-practice"}
+
+
+def test_direct_reference_material_fetch_records_a_fresh_exposure(monkeypatch):
+    monkeypatch.setattr('app.services.current_practice.local_today', lambda: date(2026, 9, 11))
+    with TestClient(app) as client:
+        database = connect_database(app.state.database_path)
+        try:
+            database.execute("DELETE FROM source WHERE id='source-theory'")
+            seed_question(database, "theory")
+            task = dict(make_plan(database, "theory"))
+            version_id = task["question_version_id"]
+            materials = [
+                {"block_id": "prompt-image", "status": "complete", "role": "prompt", "path": "prompt.bin"},
+                {"block_id": "answer-image", "status": "complete", "role": "reference", "path": "answer.bin"},
+            ]
+            database.execute(
+                "INSERT OR REPLACE INTO version_resources(version_id,reference_ids_json,materials_json) VALUES (?, '[]', ?)",
+                (version_id, json.dumps(materials)),
+            )
+            start_attempt(database, task["id"], "review", datetime.now(UTC) - timedelta(hours=50))
+            database.commit()
+            media = Path(app.state.database_path).parent / "media"
+            media.mkdir(exist_ok=True)
+            (media / "prompt.bin").write_bytes(b"prompt")
+            (media / "answer.bin").write_bytes(b"answer")
+
+            assert client.get(f'/api/tasks/{task["id"]}/materials/prompt-image').status_code == 200
+            assert client.get(f'/api/tasks/{task["id"]}/materials/answer-image').status_code == 403
+            expose_answer(database, task["id"], datetime.now(UTC) - timedelta(hours=49))
+            database.commit()
+            assert database.execute("SELECT COUNT(*) FROM answer_exposure").fetchone()[0] == 1
+            assert client.get(f'/api/tasks/{task["id"]}/materials/answer-image').status_code == 200
+            assert database.execute("SELECT COUNT(*) FROM answer_exposure").fetchone()[0] == 2
+            question_id = database.execute("SELECT question_id FROM task WHERE id=?", (task["id"],)).fetchone()[0]
+            assert exposed_recently(database, question_id, datetime.now(UTC))
+        finally:
+            database.close()
 
 
 def test_completed_answer_and_correction_across_requests(monkeypatch):
@@ -160,7 +198,7 @@ def test_older_sync_cannot_replace_newer_published_snapshot(database, monkeypatc
 def test_rejected_candidate_does_not_keep_source_partial(database, monkeypatch):
     from app.services.candidates import reject_candidate
     live_theory(database)
-    blocks = [heading('q', 1, 'Why?'), text_block('r', 'answer')]
+    blocks = [heading('q', 3, 'Why?' * 101), text_block('r', 'answer')]
     run_live(database, monkeypatch, 1, blocks)
     reject_candidate(database, database.execute('SELECT id FROM parser_candidate').fetchone()[0])
     assert run_live(database, monkeypatch, 1, blocks)['partial'] is False

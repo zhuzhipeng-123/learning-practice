@@ -74,10 +74,14 @@ def test_idempotency_key_rejects_changed_payload(database: sqlite3.Connection) -
         create_daily_plan(database, date(2026, 9, 11), 0, 1, {}, "same-key", 1)
 
 
-def test_code_cannot_solve_completes_and_enters_review(database: sqlite3.Connection) -> None:
+def test_code_cannot_solve_completes_and_enters_review(
+    database: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     seed_question(database, "code")
     task = make_plan(database, "code")
     now = datetime(2026, 9, 11, 8, tzinfo=UTC)
+    monkeypatch.setattr('app.services.practice.local_today', lambda: now.date())
     start_attempt(database, task["id"], "daily", now)
     submission = Submission(
         task_id=task["id"],
@@ -97,10 +101,14 @@ def test_code_cannot_solve_completes_and_enters_review(database: sqlite3.Connect
     assert database.execute("SELECT status FROM task").fetchone()[0] == "completed"
 
 
-def test_theory_submission_is_saved_without_auto_review(database: sqlite3.Connection) -> None:
+def test_theory_submission_is_saved_without_auto_review(
+    database: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     question_id = seed_question(database, "theory")
     task = make_plan(database, "theory")
     now = datetime(2026, 9, 11, 8, tzinfo=UTC)
+    monkeypatch.setattr('app.services.practice.local_today', lambda: now.date())
     start_attempt(database, task["id"], "daily", now)
 
     result = submit_theory(

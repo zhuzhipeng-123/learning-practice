@@ -49,8 +49,8 @@ async def lifespan(app: FastAPI):
     register_initial_sources(connection)
     interrupt_batches(connection)
     # Local single-process deployment: a prior process cannot still own these runs.
-    connection.execute("UPDATE alignment_run SET status='interrupted',finished_at=datetime('now'),"
-                       "error='服务重启中断了本轮对齐，请重新点击对齐继续检查' WHERE status='running'")
+    connection.execute("UPDATE alignment_run SET status='recoverable',finished_at=NULL,"
+                       "error='服务重启中断了本轮对齐，请按原请求继续' WHERE status IN ('queued','running')")
     connection.execute("UPDATE sync_run SET status='interrupted',finished_at=datetime('now'),"
                        "error='服务重启中断了读取' WHERE status='running'")
     connection.commit()

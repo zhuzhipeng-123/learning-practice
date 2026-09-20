@@ -6,6 +6,38 @@ Build a local personal learning, practice, and review web app. Feishu owns origi
 
 The authoritative design is `docs/original-learning-app-plan.md`. Do not treat that design as already implemented or tested.
 
+## September 19 review implementation
+
+The user requested a review and a staged implementation handoff, available in
+`docs/project-review-and-implementation-plan.md` and `docs/implementation-prompt.md`.
+These documents distinguish explicit user requirements, proposed defaults, verified
+defects, and untested experiments. Section 10 is the authoritative implementation
+progress record. Local implementation is complete for B1-B8. The B4 real-model
+comparison used synthetic data and retained option A because assisted modes could not pass
+the smoke contract reliably. These documents do not authorize live
+data changes. When the user requests execution of that handoff, its explicit
+September 19 targets supersede the conflicting older daily auto-draw and heading
+rules below for the corresponding batch; preserve unrelated contracts. Update the
+affected active rules when implementing each batch rather than retaining contradictions.
+Expanded model involvement in alignment is conditional on the documented comparative
+experiment; retaining rules or optional assistance is an acceptable outcome.
+Keep execution progress in that plan instead of creating another phase report.
+
+The B4 experiment runner is synthetic-data only. Any future real B/C rerun requires explicit
+authorization and one named stage per invocation. Preserve the 40-attempt cap,
+60-minute soft budget, frozen fingerprints, atomic checkpoint/resume behavior, and
+smoke/development/holdout gates. Count failed and rate-limited network attempts.
+Do not mark a run ready for human decision until repeat-1 and repeat-2 also finish
+and produce a stability result. The September 21 experiment stopped at smoke after
+bounded format correction still produced invalid evidence bindings; keep deterministic
+rules as the active alignment path unless a future separately authorized experiment passes.
+Missing image, native-table cell, or Sheets grid content can never be reported as a
+successful model material check. Program metrics inform but never choose A/B/C.
+
+B1 keeps source-report change keys and whole-tree aggregation in one shared contract,
+including `excluded`. Failures after discovery retain completed document results and
+are reported by their actual stage instead of being added to directory-read errors.
+
 ## Stack and structure
 
 - Python 3.12
@@ -47,7 +79,7 @@ The authoritative design is `docs/original-learning-app-plan.md`. Do not treat t
 
 - Free Practice entry requires an explicit confirmation under the current entry contract. Persist a separate confirmation record when accepting a new batch request. Legacy batches and replayed legacy requests must not silently become confirmed. Entry restores only confirmed batches for the current date, including their progress and recoverable failures. Automatic next-day local draws may inherit only confirmed settings; never bootstrap them from unconfirmed history. Keep submitted facts and review records. The existing draw/generate button is the confirmation action; do not add a redundant confirmation dialog.
 
-- Latest user clarification after the September 13 audit: once the user confirms random practice, Today and Free Practice restore the same day's accepted batch and progress after refresh, closing/reopening, navigation, and service restart. Page reads, focus, polling, and editing next-batch preferences must never redraw it. Use the server's Asia/Shanghai date; expired tasks do not carry into the next day, while submitted facts and review membership remain. On first opening a new day, restore confirmed daily targets and random-original free settings with idempotent local draws; never automatically run topic selection or variant models. Code and theory retain independent free batches. This supersedes the earlier empty-practice-entry rule. The Autumn entry still does not restore an old session list; explicitly opened sessions retain continuous conversation and safe request recovery. Keep /history redirected to Review and do not restore a standalone History module.
+- Latest September 19 rule: once the user confirms practice, Today and Free Practice restore the same day's accepted batch and progress after refresh, closing/reopening, navigation, browser back/forward, and service restart. Page reads, focus, polling, and editing next-batch preferences must never redraw it. Use the server's Asia/Shanghai date; expired tasks do not carry into the next day, while submitted facts and review membership remain. On first opening a new day, prefill the last confirmed daily preferences but create no daily tasks until explicit confirmation. Never automatically run topic selection or variant models. Code and theory retain independent free batches. The Autumn entry still does not restore an old session list; explicitly opened sessions retain continuous conversation and safe request recovery. Keep /history redirected to Review and do not restore a standalone History module.
 
 - Audit repair acceptance: every accepted free request key, including a request deduplicated to another running batch, must recover its original batch. Late browser responses may clear only their own request key. Manual assessment retries preserve their original result and must not replace a newer adoption. Older code attempts cannot silently replace a newer active review basis. Interview drafts must remain separate even when a tab inherits sessionStorage. Review previews use stable session/turn identity and bounded frozen context. Code references include embedded Sheets or report an explicit parsing gap. Day-detail scopes match the task origins used by the heatmap. Provide export and isolated verification actions in the existing settings page.
 
@@ -112,8 +144,9 @@ The authoritative design is `docs/original-learning-app-plan.md`. Do not treat t
 - Place the heatmap and personal/model reflection at the beginning of the homepage; list code and theory practice separately. Model reflection covers successes, weak points and pending assessments with question/session context, without revealing answers.
 - Interview entry accepts a direction or model-suggested directions, with optional job focus. Also offer one-click review deep dives and classic questions without requiring a large question-bank selector.
 - Homepage practice lists and progress reflect saved base code/theory targets only; extra practice belongs on its own pages. Free practice has separate code/theory draws and restores the same-day accepted batches. Old unfinished free tasks are retired after explicit replacement or day rollover. Changed inputs are unapplied until saved and never redraw a confirmed batch merely by navigation.
-- Theory question anchors must be H1, H2, or H3 headings. H4-H6 and ordinary paragraphs are reference content, never standalone questions. Empty container headings remain modules. Exclude legacy non-heading questions from future allocation without deleting tasks, versions, or answers.
+- Theory H1/H2 headings are modules. H3 is normally a question; an explicit-question H3 remains the question when its answer starts with H4-H6. Only a non-question H3 may become a container. H4-H6 are interpreted from context, so a question-like deeper heading after an empty container may be a question while a deeper heading inside an H3 answer remains reference structure. Ordinary paragraphs are reference content. Exclude incompatible legacy non-heading questions from future allocation without deleting tasks, versions, or answers.
 - Alignment accepts an optional user change description, retains it in the run report, and supplies it to model review. The description never proves deletion or replaces complete source discovery.
+- A native-table attachment is part of the owning version's material closure. A pending, failed, or missing nested attachment keeps the version incomplete, blocks allocation, and renders an explicit gap instead of an empty cell.
 - Default screens show learning outcomes, not API JSON, internal IDs, or service configuration. Keep independent editable prompts in collapsed sections with purpose and output-budget rationale. Rollover refreshes clean pages on local-day change; dirty forms must retain text.
 
 ## Current defaults, not immutable user requirements
