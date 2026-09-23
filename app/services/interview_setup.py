@@ -65,8 +65,13 @@ def validate_preparation(context, value):
     return value
 
 
-def checked_suggestions(connection, context, reply, config, model, job_id, messages):
-    from app.services.model_jobs import ModelJobError
+def checked_suggestions(connection, context, reply, config, model, job_id, execution_id, messages):
+    from app.services.model_diagnostics import log_event, started_at
+    from app.services.model_jobs import (
+        ModelJobError,
+        load_model_request_owned,
+        update_model_request_owned,
+    )
     from app.services.model_json import ModelJSONError, complete_json, parse_model_json
     from app.storage.transactions import transaction
     try:
@@ -78,11 +83,15 @@ def checked_suggestions(connection, context, reply, config, model, job_id, messa
                        '严格符合原 job_focus 并避开 avoid，只输出 {"directions":["标题1","标题2","标题3"]}。')
     # Retain the rejected output and exact correction; never silently truncate a direction.
     with transaction(connection):
-        stored = json.loads(connection.execute('SELECT config_json FROM model_request WHERE job_id=?', (job_id,)).fetchone()[0])
+        stored = json.loads(load_model_request_owned(connection, job_id, execution_id)['config_json'])
         stored['format_repair'] = {'rejected_response': reply.content, 'instruction': instruction, 'max_tokens': config['max_tokens']}
-        connection.execute('UPDATE model_request SET config_json=? WHERE job_id=?', (json.dumps(stored, ensure_ascii=False), job_id))
+        update_model_request_owned(connection, job_id, execution_id,
+                                   config_json=json.dumps(stored, ensure_ascii=False))
+    repair_started = started_at()
     fixed = complete_json(model, [*messages, {'role':'assistant', 'content':reply.content},
                                  {'role':'user', 'content':instruction}], config['max_tokens'])
+    log_event(job_id, 'interview_preparation', execution_id, 'repair',
+              started=repair_started, reply=fixed)
     validate_preparation(context, parse_model_json(fixed.content))
     return fixed
 

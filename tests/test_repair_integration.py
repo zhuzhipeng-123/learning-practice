@@ -74,7 +74,9 @@ def test_completed_answer_and_correction_across_requests(monkeypatch):
             database.close()
         path = f"/api/tasks/{task['id']}"
         now = datetime.now(UTC).isoformat()
-        assert "theory reference" not in client.get(f"/practice/{task['id']}").text
+        initial_page = client.get(f"/practice/{task['id']}").text
+        assert "theory reference" not in initial_page
+        assert "来源笔记，不表示已逐项人工核验" in initial_page
         assert client.post(path + "/attempts", headers=HEADERS, json={"entry_mode": "web", "started_at": now}).status_code == 200
         body = {"entry_mode": "web", "submitted_at": now, "answer_text": "saved answer"}
         headers = {**HEADERS, "Idempotency-Key": "web-answer"}
@@ -119,7 +121,7 @@ def test_review_placeholder_does_not_block_daily_plan(database):
 def test_download_progress_preserves_permission_error(monkeypatch):
     payload = {"ok": False, "error": {"code": 400, "message": 'HTTP 400: {"msg":"Access denied"}'}}
     completed = subprocess.CompletedProcess([], 4, b"", b"Downloading: media safe\n" + json.dumps(payload).encode())
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: completed)
+    monkeypatch.setattr('app.adapters.lark_cli._run_bounded', lambda *args, **kwargs: completed)
     with pytest.raises(LarkCliPermissionError, match="Access denied"):
         LarkCliClient().download_media("safe", Path("sample.bin"), "bot")
 

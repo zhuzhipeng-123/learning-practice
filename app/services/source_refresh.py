@@ -24,7 +24,6 @@ REFRESH_COOLDOWN = timedelta(minutes=10)
 
 def source_status(connection):
     location = connection.execute("PRAGMA database_list").fetchone()[2]
-    _mark_orphaned_runs(connection, location)
     rows = [dict(row) for row in connection.execute(
         "SELECT s.id,s.question_type,s.last_check_at,s.last_check_success_at,s.last_complete_sync_at,s.last_error,"
         "COALESCE((SELECT summary_json FROM alignment_run WHERE source_id=s.id ORDER BY rowid DESC LIMIT 1),"
@@ -122,21 +121,27 @@ def _schedule_run(location, source_id, run_id, change_note):
 def _refresh(location, source_id, run_id, change_note=''):
     connection = connect_database(location)
     try:
+        with transaction(connection):
+            claimed = connection.execute(
+                "UPDATE alignment_run SET status='running',finished_at=NULL,error=NULL "
+                "WHERE id=? AND source_id=? AND status IN ('queued','recoverable')",
+                (run_id, source_id),
+            ).rowcount
+        if not claimed:
+            return
         from app.services.wiki_alignment import align_source_tree
         align_source_tree(connection, source_id, analyze_alignment, change_note=change_note, run_id=run_id)
     except Exception as error:
         logging.getLogger(__name__).exception("Source refresh failed: %s", source_id)
         with transaction(connection):
-            connection.execute("UPDATE alignment_run SET status='failed',finished_at=?,error=? WHERE id=?",
+            connection.execute("UPDATE alignment_run SET status='failed',finished_at=?,error=? "
+                               "WHERE id=? AND status='running'",
                                (datetime.now(UTC).isoformat(), str(error), run_id))
     finally:
         connection.close()
 
 
 def alignment_request_status(connection, request_key, sources=None):
-    if sources is None:
-        location = connection.execute("PRAGMA database_list").fetchone()[2]
-        _mark_orphaned_runs(connection, location)
     request = connection.execute('SELECT * FROM alignment_request WHERE request_key=?', (request_key,)).fetchone()
     if not request:
         raise ValueError('没有找到这次对齐请求')
@@ -145,25 +150,20 @@ def alignment_request_status(connection, request_key, sources=None):
         "JOIN alignment_run r ON r.id=a.run_id WHERE a.request_key=? ORDER BY a.source_id", (request_key,))]
     terminal = all(row['status'] in {'complete', 'partial', 'failed'} for row in rows)
     status = 'complete' if terminal else 'recoverable' if any(row['status'] == 'recoverable' for row in rows) else 'running'
-    with transaction(connection):
-        connection.execute('UPDATE alignment_request SET status=?,updated_at=? WHERE request_key=?',
-                           (status, datetime.now(UTC).isoformat(), request_key))
     return {'request_key': request_key, 'status': status, 'terminal': terminal, 'runs': rows,
             'used_cache': True,
             'refreshing': [row['source_id'] for row in rows if row['status'] not in {'complete', 'partial', 'failed'}],
             'sources': sources if sources is not None else source_status(connection)}
 
 
-def _mark_orphaned_runs(connection, location):
-    with _lock:
-        active_sources = {source_id for (path, source_id), job in _jobs.items()
-                          if path == location and not job.done()}
-    candidates = connection.execute("SELECT id,source_id FROM alignment_run WHERE status IN ('queued','running')").fetchall()
-    orphaned = [row['id'] for row in candidates if row['source_id'] not in active_sources]
-    if not orphaned:
-        return
+def recover_interrupted_alignment_runs(connection):
+    """Release durable runs only at single-process startup, never during a status read."""
     with transaction(connection):
-        connection.executemany("UPDATE alignment_run SET status='recoverable' WHERE id=?", ((run_id,) for run_id in orphaned))
+        return connection.execute(
+            "UPDATE alignment_run SET status='recoverable',finished_at=NULL,"
+            "error='服务重启中断了本轮对齐，请按原请求继续' "
+            "WHERE status IN ('queued','running')"
+        ).rowcount
 
 
 def analyze_alignment(connection, source_id, result, client=None):

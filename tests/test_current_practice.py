@@ -248,3 +248,17 @@ def test_review_page_has_separate_code_and_theory_collections(monkeypatch):
         assert html.count('data-review-question=') == 2
         assert db.execute('SELECT COUNT(*) FROM question_exposure').fetchone()[0] == 0
         db.close()
+
+
+def test_review_hint_queries_are_constant(database):
+    from app.services.learning_clock import local_now
+    from app.services.review import review_hint_flags
+
+    statements = []
+    database.set_trace_callback(lambda statement: statements.append(statement)
+                                if statement.lstrip().upper().startswith('SELECT') else None)
+    try:
+        assert review_hint_flags(database, local_now()) == (set(), set())
+    finally:
+        database.set_trace_callback(None)
+    assert len(statements) == 2

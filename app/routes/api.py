@@ -209,8 +209,8 @@ def add_source(body: SourceRequest, database: Database):
 
 @router.post("/sources/bootstrap")
 def bootstrap_sources(database: Database):
-    register_initial_sources(database)
-    return {"status": "ok", "source_count": 2}
+    source_count = register_initial_sources(database)
+    return {"status": "ok", "source_count": source_count}
 
 
 @router.post("/sources/{source_id}/sync")

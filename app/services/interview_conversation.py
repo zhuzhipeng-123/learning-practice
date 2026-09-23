@@ -27,13 +27,19 @@ def live_conversation(connection, session_id, pending_revision=None):
     answer = next((turn['id'] for turn in reversed(turns) if turn['role'] == 'user'), '')
     revision = pending_revision if pending_revision is not None else answer
     job = connection.execute(
-        'SELECT status,result_id,created_at,updated_at FROM model_job WHERE business_key=?',
+        'SELECT j.status,j.result_id,j.created_at,j.updated_at,x.lease_expires_at,x.deadline_at '
+        'FROM model_job j LEFT JOIN model_job_execution x ON x.job_id=j.id WHERE j.business_key=?',
         (f'interview_followup:{session_id}:{revision}',)).fetchone() if revision else None
     continuation = {**dict(job), 'answer_revision': revision} if job else None
     if continuation and continuation['status'] == 'running':
         from app.services.model_jobs import LEASE_DURATION
-        started = datetime.fromisoformat(continuation['updated_at'])
-        if datetime.now(UTC) - started.replace(tzinfo=started.tzinfo or UTC) >= LEASE_DURATION:
+        now = datetime.now(UTC)
+        legacy_started = datetime.fromisoformat(continuation['updated_at'])
+        legacy_expired = now - legacy_started.replace(tzinfo=legacy_started.tzinfo or UTC) >= LEASE_DURATION
+        lease_expired = (datetime.fromisoformat(continuation['lease_expires_at']) <= now
+                         or datetime.fromisoformat(continuation['deadline_at']) <= now
+                         if continuation['lease_expires_at'] and continuation['deadline_at'] else legacy_expired)
+        if lease_expired:
             continuation['status'] = 'expired'
     return {'turns': turns, 'revision': turns[-1]['id'] if turns else '', 'status': session['status'],
             'continuation': continuation}

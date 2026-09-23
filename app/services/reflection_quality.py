@@ -23,7 +23,7 @@ def validate_reflection(context, payload):
     return payload
 
 
-def checked_reflection(connection, context, reply, config, model, job_id, messages):
+def checked_reflection(connection, context, reply, config, model, job_id, execution_id, messages):
     try:
         validate_reflection(context, parse_model_json(reply.content))
         return reply
@@ -31,11 +31,16 @@ def checked_reflection(connection, context, reply, config, model, job_id, messag
         instruction = ('修正复盘输出：' + str(error) + '。只输出原协议要求的 content 与 covered_ids；'
                        '正文用题目名称，不含内部ID，JSON解析后使用实际换行。代码自评不会是已知薄弱点，不是待评价。'
                        '尚未回答的追问只能说未检验。依据输入已知事实，不复制模型旧总结，不推断未提交的实现。')
+    from app.services.model_diagnostics import log_event, started_at
+    from app.services.model_jobs import load_model_request_owned, update_model_request_owned
     with transaction(connection):
-        stored = json.loads(connection.execute('SELECT config_json FROM model_request WHERE job_id=?', (job_id,)).fetchone()[0])
+        stored = json.loads(load_model_request_owned(connection, job_id, execution_id)['config_json'])
         stored['format_repair'] = {'rejected_response':reply.content, 'instruction':instruction, 'max_tokens':config['max_tokens']}
-        connection.execute('UPDATE model_request SET config_json=? WHERE job_id=?', (json.dumps(stored, ensure_ascii=False), job_id))
+        update_model_request_owned(connection, job_id, execution_id,
+                                   config_json=json.dumps(stored, ensure_ascii=False))
+    repair_started = started_at()
     fixed = complete_json(model, [*messages, {'role':'assistant','content':reply.content},
                                  {'role':'user','content':instruction}], config['max_tokens'])
+    log_event(job_id, 'daily_reflection', execution_id, 'repair', started=repair_started, reply=fixed)
     validate_reflection(context, parse_model_json(fixed.content))
     return fixed

@@ -2,9 +2,11 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event, Lock, Thread
 from typing import Any
 
 
@@ -52,8 +54,8 @@ class LarkCliClient:
         self._validate_arguments(arguments)
         command = [self.executable, *arguments, "--format", "json"]
         try:
-            completed = subprocess.run(command, capture_output=True, check=False,
-                                       shell=False, timeout=self.timeout_seconds, cwd=self.work_directory)
+            completed = _run_bounded(command, self.work_directory, self.timeout_seconds,
+                                     self.max_output_bytes)
         except subprocess.TimeoutExpired as error:
             raise LarkCliError("lark-cli timed out; cached content remains available") from error
         except OSError as error:
@@ -141,3 +143,61 @@ class LarkCliClient:
             or error.get("subtype") in {"app_scope_not_applied", "permission_denied"}
             or "Access denied" in message
         )
+
+
+def _run_bounded(command, work_directory, timeout_seconds, max_output_bytes):
+    """Drain both pipes concurrently and stop before either buffer grows without bound."""
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               shell=False, cwd=work_directory)
+    overflow = Event()
+    lock = Lock()
+    exceeded = []
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
+
+    def read_stream(name, stream):
+        try:
+            while chunk := stream.read(64 * 1024):
+                with lock:
+                    remaining = max_output_bytes + 1 - len(buffers[name])
+                    if remaining > 0:
+                        buffers[name].extend(chunk[:remaining])
+                    if len(buffers[name]) > max_output_bytes:
+                        exceeded.append(name)
+                        overflow.set()
+                        return
+        finally:
+            stream.close()
+
+    threads = [Thread(target=read_stream, args=(name, stream), daemon=True)
+               for name, stream in (("stdout", process.stdout), ("stderr", process.stderr))]
+    for thread in threads:
+        thread.start()
+    deadline = time.monotonic() + timeout_seconds
+    timed_out = False
+    while process.poll() is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            timed_out = True
+            _stop_process(process)
+            break
+        if overflow.wait(min(0.05, remaining)):
+            _stop_process(process)
+            break
+    for thread in threads:
+        thread.join(timeout=1)
+    if timed_out:
+        raise subprocess.TimeoutExpired(command, timeout_seconds,
+                                        output=bytes(buffers["stdout"]), stderr=bytes(buffers["stderr"]))
+    if exceeded:
+        raise LarkCliResponseError(f"{exceeded[0]} exceeded the output limit")
+    return subprocess.CompletedProcess(command, process.returncode,
+                                       bytes(buffers["stdout"]), bytes(buffers["stderr"]))
+
+
+def _stop_process(process):
+    process.terminate()
+    try:
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=1)

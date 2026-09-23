@@ -54,6 +54,17 @@ B1 keeps source-report change keys and whole-tree aggregation in one shared cont
 including `excluded`. Failures after discovery retain completed document results and
 are reported by their actual stage instead of being added to directory-read errors.
 
+September 21 reliability remediation: alignment status reads are side-effect free;
+single-process startup alone releases interrupted queued/running alignment runs, and a
+worker must conditionally claim a queued/recoverable run before doing external work.
+Model jobs use a stable execution id, heartbeat lease and persisted 60-minute adoption
+deadline. Every intermediate response, repair audit and final learning write must verify
+the current execution owner. This guarantees at-most-once result adoption, not exactly-once
+external model calls; recovery may repeat a provider request. Keep the documented single
+application-process boundary. `lark-cli` stdout and stderr must be drained concurrently with
+an enforced per-stream limit, timeout and child-process cleanup rather than checked only
+after unbounded collection.
+
 ## Stack and structure
 
 - Python 3.12

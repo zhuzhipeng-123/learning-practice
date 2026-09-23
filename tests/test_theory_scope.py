@@ -164,18 +164,22 @@ def test_daily_theory_scope_does_not_filter_code_pool(database, monkeypatch):
     assert len(batch['task_ids']) == 2 and [row[0] for row in kinds] == ['code']
 
 
-def test_v15_migration_adds_scope_with_backup(tmp_path):
+def test_v14_migration_adds_scope_and_model_execution_with_backup(tmp_path):
     path = tmp_path / 'v14.db'
     database = connect_database(path)
     initialize_database(database)
+    database.execute('DROP TABLE model_job_execution')
     database.execute('ALTER TABLE daily_plan DROP COLUMN theory_scope_json')
-    database.execute('DELETE FROM schema_version WHERE version=15')
+    database.execute('DELETE FROM schema_version WHERE version>=15')
     database.commit()
 
     initialize_database(database)
 
-    assert database.execute('SELECT MAX(version) FROM schema_version').fetchone()[0] == 15
+    assert database.execute('SELECT MAX(version) FROM schema_version').fetchone()[0] == 16
     assert 'theory_scope_json' in {row['name'] for row in database.execute('PRAGMA table_info(daily_plan)')}
+    assert database.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='model_job_execution'"
+    ).fetchone()
     assert len(list(tmp_path.glob('pre-migration-v14-*.db'))) == 1
     database.close()
 

@@ -87,7 +87,9 @@ def validate_example_evidence(original, item):
             item['issues'].append(f"{check['example_id']}：{check['reason']}；重算结果：{check['computed_output']}")
 
 
-def checked_quality_format(connection, context, reply, config, model, job_id, messages):
+def checked_quality_format(connection, context, reply, config, model, job_id, execution_id, messages):
+    from app.services.model_diagnostics import log_event, started_at
+    from app.services.model_jobs import load_model_request_owned, update_model_request_owned
     from app.services.model_json import ModelJSONError
     from app.storage.transactions import transaction
     try:
@@ -100,14 +102,17 @@ def checked_quality_format(connection, context, reply, config, model, job_id, me
             'input_quote逐字引用原示例的输入；独立重算每一例。输出与解释互相矛盾，即使后面改口纠正，也必须consistent=false。'
             '保留五个布尔检查和issues，只输出完整JSON。')
     with transaction(connection):
-        stored = json.loads(connection.execute('SELECT config_json FROM model_request WHERE job_id=?', (job_id,)).fetchone()[0])
+        stored = json.loads(load_model_request_owned(connection, job_id, execution_id)['config_json'])
         stored['format_repair'] = {'rejected_response': reply.content, 'instruction': instruction}
-        connection.execute('UPDATE model_request SET config_json=? WHERE job_id=?', (json.dumps(stored, ensure_ascii=False), job_id))
+        update_model_request_owned(connection, job_id, execution_id,
+                                   config_json=json.dumps(stored, ensure_ascii=False))
+    repair_started = started_at()
     fixed = complete_json(model, [*messages, {'role': 'assistant', 'content': reply.content},
                                   {'role': 'user', 'content': instruction}], config['max_tokens'])
+    log_event(job_id, 'question_quality', execution_id, 'repair', started=repair_started, reply=fixed)
     with transaction(connection):
-        connection.execute('UPDATE model_request SET response_text=?,response_model=? WHERE job_id=?',
-                           (fixed.content, fixed.model, job_id))
+        update_model_request_owned(connection, job_id, execution_id,
+                                   response_text=fixed.content, response_model=fixed.model)
     validate_quality(context, parse_model_json(fixed.content))
     return fixed
 
@@ -173,12 +178,13 @@ def _review(connection, module, context, text, parent_job, messages):
     return problems
 
 
-def checked_reply(connection, module, context, reply, config, model, parent_job, messages):
+def checked_reply(connection, module, context, reply, config, model, parent_job, execution_id, messages):
     if module not in QUESTION_MODULES:
         return reply
     if module == 'interview_preparation' and context['mode'] == 'suggest':
         from app.services.interview_setup import checked_suggestions
-        return checked_suggestions(connection, context, reply, config, model, parent_job, messages)
+        return checked_suggestions(connection, context, reply, config, model, parent_job,
+                                   execution_id, messages)
     problems = _review(connection, module, context, reply.content, parent_job, messages)
     if not problems:
         return reply

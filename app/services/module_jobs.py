@@ -6,7 +6,15 @@ from datetime import UTC, date, datetime
 from app.services.interview import add_turn
 from app.services.learning_clock import local_date, utc_bounds_for_local_days
 from app.services.llm_config import client_for_config, freeze_request
-from app.services.model_jobs import ModelJobError, _claim_job, fail_job
+from app.services.model_diagnostics import log_event, started_at
+from app.services.model_jobs import (
+    ModelJobError,
+    _claim_job,
+    assert_job_owner,
+    fail_job,
+    job_lease_heartbeat,
+    update_model_request_owned,
+)
 from app.services.model_json import complete_json, parse_model_json
 from app.services.reflections import (
     activity_timeline,
@@ -129,41 +137,57 @@ def run_module_job(connection, module, target, request_key, client=None, context
     if claimed.get("result_id"):
         return _result(connection, job_id)
     try:
-        request = claimed["request"]
-        config = json.loads(request["config_json"])
-        model = client or (client_factory or client_for_config)(config)
-        messages = [{"role": "system", "content": config["system_prompt"]},
-                    {"role": "user", "content": request["input_json"]}]
-        reply = (model.complete(messages, max_tokens=config['max_tokens']) if module == 'interview_feedback' and not config.get('feedback_format')
-                 else complete_json(model, messages, config['max_tokens']))
-        with transaction(connection):
-            connection.execute("UPDATE model_request SET response_text=?,response_model=? WHERE job_id=? AND EXISTS "
-                               "(SELECT 1 FROM model_job WHERE id=? AND status='running' AND updated_at=?)",
-                               (reply.content, reply.model, job_id, job_id, claimed["claimed_at"]))
-        from app.services.question_quality import checked_reply
-        context = json.loads(request['input_json'])
-        if module == 'question_quality' and any(item.get('examples') for item in context['items']):
-            from app.services.question_quality import checked_quality_format
-            reply = checked_quality_format(connection, context, reply, config, model, job_id, messages)
-        if module == 'daily_reflection':
-            from app.services.reflection_quality import checked_reflection
-            reply = checked_reflection(connection, context, reply, config, model, job_id, messages)
-        if module == 'interview_feedback' and context.get('feedback_format'):
-            from app.services.interview_feedback import checked_feedback
-            reply = checked_feedback(connection, context, reply, config, model, job_id, messages)
-        reply = checked_reply(connection, module, context, reply, config, model, job_id, messages)
-        with transaction(connection):
-            if not connection.execute("SELECT 1 FROM model_job WHERE id=? AND status='running' AND updated_at=?",
-                                      (job_id, claimed["claimed_at"])).fetchone():
-                raise ModelJobError("请求已过期，迟到结果没有写入学习记录")
-            context = json.loads(request["input_json"])
-            result_id = _save_result(connection, module, context, reply.content)
-            connection.execute("UPDATE model_request SET response_text=?,response_model=? WHERE job_id=?", (reply.content, reply.model, job_id))
-            connection.execute("UPDATE model_job SET status='complete',result_id=?,updated_at=?,error=NULL WHERE id=?",
-                               (result_id, datetime.now(UTC).isoformat(), job_id))
-        return _result(connection, job_id)
+        execution_id = claimed["execution_id"]
+        log_event(job_id, module, execution_id, "claim")
+        with job_lease_heartbeat(connection, job_id, execution_id):
+            request = claimed["request"]
+            config = json.loads(request["config_json"])
+            model = client or (client_factory or client_for_config)(config)
+            messages = [{"role": "system", "content": config["system_prompt"]},
+                        {"role": "user", "content": request["input_json"]}]
+            call_started = started_at()
+            reply = (model.complete(messages, max_tokens=config['max_tokens']) if module == 'interview_feedback' and not config.get('feedback_format')
+                     else complete_json(model, messages, config['max_tokens']))
+            log_event(job_id, module, execution_id, "call", started=call_started, reply=reply)
+            with transaction(connection):
+                update_model_request_owned(connection, job_id, execution_id,
+                                           response_text=reply.content, response_model=reply.model)
+            from app.services.question_quality import checked_reply
+            context = json.loads(request['input_json'])
+            if module == 'question_quality' and any(item.get('examples') for item in context['items']):
+                from app.services.question_quality import checked_quality_format
+                reply = checked_quality_format(connection, context, reply, config, model, job_id,
+                                               execution_id, messages)
+            if module == 'daily_reflection':
+                from app.services.reflection_quality import checked_reflection
+                reply = checked_reflection(connection, context, reply, config, model, job_id,
+                                           execution_id, messages)
+            if module == 'interview_feedback' and context.get('feedback_format'):
+                from app.services.interview_feedback import checked_feedback
+                reply = checked_feedback(connection, context, reply, config, model, job_id,
+                                         execution_id, messages)
+            reply = checked_reply(connection, module, context, reply, config, model, job_id,
+                                  execution_id, messages)
+            with transaction(connection):
+                assert_job_owner(connection, job_id, execution_id)
+                context = json.loads(request["input_json"])
+                result_id = _save_result(connection, module, context, reply.content)
+                update_model_request_owned(connection, job_id, execution_id,
+                                           response_text=reply.content, response_model=reply.model)
+                changed = connection.execute(
+                    "UPDATE model_job SET status='complete',result_id=?,updated_at=?,error=NULL WHERE id=? "
+                    "AND status='running' AND EXISTS(SELECT 1 FROM model_job_execution x "
+                    "WHERE x.job_id=model_job.id AND x.execution_id=? AND x.deadline_at>?)",
+                    (result_id, datetime.now(UTC).isoformat(), job_id, execution_id,
+                     datetime.now(UTC).isoformat()),
+                ).rowcount
+                if not changed:
+                    raise ModelJobError("请求已过期，迟到结果没有写入学习记录")
+            log_event(job_id, module, execution_id, "adopt")
+            return _result(connection, job_id)
     except Exception as error:
-        raise fail_job(connection, job_id, claimed["claimed_at"], error) from error
+        log_event(job_id, module, claimed["execution_id"], "fail", error=error)
+        raise fail_job(connection, job_id, claimed["execution_id"], error) from error
 
 
 def _load_request(connection, job_id):

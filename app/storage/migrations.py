@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.storage.transactions import transaction
 
-CURRENT_VERSION = 15
+CURRENT_VERSION = 16
 MIGRATION_2 = [
     ("CREATE TABLE answer_exposure (attempt_id TEXT NOT NULL REFERENCES attempt(id),"
      "happened_at TEXT NOT NULL, PRIMARY KEY(attempt_id,happened_at))"),
@@ -115,6 +115,12 @@ MIGRATION_15 = [
     "ALTER TABLE daily_plan ADD COLUMN theory_scope_json TEXT NOT NULL DEFAULT '{}'",
 ]
 
+MIGRATION_16 = [
+    ("CREATE TABLE model_job_execution(job_id TEXT PRIMARY KEY REFERENCES model_job(id),"
+     "execution_id TEXT NOT NULL,started_at TEXT NOT NULL,heartbeat_at TEXT NOT NULL,"
+     "lease_expires_at TEXT NOT NULL,deadline_at TEXT NOT NULL)"),
+]
+
 
 def migrate(connection, backup=True):
     version = connection.execute("SELECT COALESCE(MAX(version),0) FROM schema_version").fetchone()[0]
@@ -128,7 +134,7 @@ def migrate(connection, backup=True):
         with closing(sqlite3.connect(backup_path)) as destination:
             connection.backup(destination)
     with transaction(connection):
-        for target, statements in ((2, MIGRATION_2), (3, MIGRATION_3), (4, MIGRATION_4), (5, MIGRATION_5), (6, MIGRATION_6), (7, MIGRATION_7), (8, MIGRATION_8), (9, MIGRATION_9), (10, MIGRATION_10), (11, MIGRATION_11), (12, MIGRATION_12), (13, MIGRATION_13), (14, MIGRATION_14), (15, MIGRATION_15)):
+        for target, statements in ((2, MIGRATION_2), (3, MIGRATION_3), (4, MIGRATION_4), (5, MIGRATION_5), (6, MIGRATION_6), (7, MIGRATION_7), (8, MIGRATION_8), (9, MIGRATION_9), (10, MIGRATION_10), (11, MIGRATION_11), (12, MIGRATION_12), (13, MIGRATION_13), (14, MIGRATION_14), (15, MIGRATION_15), (16, MIGRATION_16)):
             if version < target:
                 for statement in statements:
                     connection.execute(statement)

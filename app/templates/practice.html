@@ -7,7 +7,7 @@
   <p class="muted">{{ task.category_path }}</p><h2>{{ ('代码' if task.question_type == 'code' else '八股') + ('变种练习' if derivation else '练习') }}</h2><div id="question-content" class="prose question-content" style="white-space:pre-wrap">{{ task.prompt }}</div>
   {% if task.question_version_id != task.current_version_id %}<p class="notice">题库已有新版本；本次仍按安排时的内容练习，历史答案与复习依据保持原样。<a href="/questions/{{ task.question_id }}/history">查看版本记录</a></p>{% endif %}
   {% if interview_derivation %}<p class="notice">来自<a href="/interview/{{ interview_derivation.session_id }}">面试追问</a></p>{% endif %}
-  {% if reference_verification.kind != 'source' %}<p class="notice">{{ '本次练习版本的参考已由你核对。' if reference_verification.verified else '本次练习版本的参考待核对，不能用于自动评分；你仍可采用自己的评价。' }} <a href="/questions/{{ task.question_id }}/history">修改题干、答案或核验状态</a></p>{% endif %}
+  {% if reference_verification.kind == 'source' %}<p class="notice">参考来自来源笔记，不表示已逐项人工核验；重要结论请结合原始资料判断。<a href="/questions/{{ task.question_id }}/history">查看或校正本次冻结版本</a></p>{% else %}<p class="notice">{{ '本次练习版本的参考已由你核对。' if reference_verification.human_verified else '本次练习版本的参考待核对，不能用于自动评分；你仍可采用自己的评价。' }} <a href="/questions/{{ task.question_id }}/history">修改题干、答案或核验状态</a></p>{% endif %}
   {% if task.question_type == 'theory' and materials | selectattr('role','equalto','reference') | selectattr('kind','equalto','media') | list %}<p class="notice">参考含图片。当前自动评价只读取文字，会提示依据不足；请看图核对后采用自己的评价。</p>{% endif %}
   {% if derivation %}<p class="notice">模型变种题 · 基于「{{ derivation.prompt }}」。参考答案由模型生成，可在评价时自行核对和修正。</p>{% endif %}
   {% if task.status != 'completed' and task.status != 'cancelled' %}

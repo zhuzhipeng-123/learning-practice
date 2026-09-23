@@ -8,7 +8,8 @@ def verification(connection, version_id):
     if row is None:
         raise ValueError('题目版本不存在')
     verified = bool(row['verified']) if row['verified'] is not None else row['source_kind'] == 'feishu'
-    return {'verified': verified, 'kind': 'source' if row['source_kind'] == 'feishu' else 'human' if verified else 'unverified',
+    kind = 'source' if row['source_kind'] == 'feishu' else 'human' if verified else 'unverified'
+    return {'verified': verified, 'kind': kind, 'human_verified': kind == 'human',
             'evidence': row['evidence'], 'verified_at': row['created_at']}
 
 

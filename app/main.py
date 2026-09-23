@@ -22,6 +22,7 @@ from app.services.practice import PracticeError
 from app.services.reflections import ReflectionError
 from app.services.review import ReviewError
 from app.services.runtime_state import RuntimeVersionGuard
+from app.services.source_refresh import recover_interrupted_alignment_runs
 from app.services.tasks import IdempotencyConflictError
 from app.storage.database import connect_database, initialize_database
 
@@ -49,8 +50,7 @@ async def lifespan(app: FastAPI):
     register_initial_sources(connection)
     interrupt_batches(connection)
     # Local single-process deployment: a prior process cannot still own these runs.
-    connection.execute("UPDATE alignment_run SET status='recoverable',finished_at=NULL,"
-                       "error='服务重启中断了本轮对齐，请按原请求继续' WHERE status IN ('queued','running')")
+    recover_interrupted_alignment_runs(connection)
     connection.execute("UPDATE sync_run SET status='interrupted',finished_at=datetime('now'),"
                        "error='服务重启中断了读取' WHERE status='running'")
     connection.commit()

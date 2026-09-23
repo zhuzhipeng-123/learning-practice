@@ -23,12 +23,21 @@ def isolated_app_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         ('source-code', 'demo-code-document', 'https://example.feishu.cn/wiki/demo-code', 'code'),
         ('source-theory', 'demo-theory-document', 'https://example.feishu.cn/wiki/demo-theory', 'theory'),
     ])
-    monkeypatch.setattr("app.routes.api.queue_source_refresh", lambda connection, *a, **k: {"used_cache": True, "sources": [], "refreshing": []})
     # Mock only the external reviewer, while still exercising its job and validation path.
     def reviewer(messages, **kwargs):
         context = json.loads(messages[1]['content'])
         return SimpleNamespace(content=json.dumps(quality_result(context['items'])), model='fixture-reviewer')
     monkeypatch.setattr('app.services.question_quality.client_for_config', lambda _: SimpleNamespace(complete=reviewer))
+    yield
+    from app.services.source_refresh import _jobs, _lock
+    with _lock:
+        owned = [(key, future) for key, future in _jobs.items()
+                 if Path(key[0]).is_relative_to(tmp_path)]
+    for key, future in owned:
+        future.result(timeout=5)
+        with _lock:
+            if _jobs.get(key) is future:
+                _jobs.pop(key, None)
 
 
 @pytest.fixture

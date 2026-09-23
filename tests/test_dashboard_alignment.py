@@ -220,6 +220,15 @@ def test_every_click_refreshes_but_inflight_clicks_deduplicate(database, monkeyp
         calls.append(source_id)
         started.set()
         assert release.wait(5)
+        worker_database = connect_database(location)
+        try:
+            worker_database.execute(
+                "UPDATE alignment_run SET status='complete',finished_at=datetime('now') WHERE id=?",
+                (run_id,),
+            )
+            worker_database.commit()
+        finally:
+            worker_database.close()
     monkeypatch.setattr('app.services.source_refresh._refresh', fake)
     queue_source_refresh(database, force=True, request_key='refresh-first')
     assert started.wait(2)

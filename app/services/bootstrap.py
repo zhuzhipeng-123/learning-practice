@@ -16,10 +16,11 @@ def load_initial_sources():
     return sources
 
 
-def register_initial_sources(connection: sqlite3.Connection) -> None:
+def register_initial_sources(connection: sqlite3.Connection) -> int:
     connection.executemany(
         "INSERT OR IGNORE INTO source(id, document_id, wiki_url, question_type) "
         "VALUES (?, ?, ?, ?)",
         load_initial_sources(),
     )
     connection.commit()
+    return connection.execute("SELECT COUNT(*) FROM source").fetchone()[0]

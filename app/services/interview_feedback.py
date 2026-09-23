@@ -53,17 +53,22 @@ def render_feedback(context, payload):
     return '\n\n'.join(lines)
 
 
-def checked_feedback(connection, context, reply, config, model, job_id, messages):
+def checked_feedback(connection, context, reply, config, model, job_id, execution_id, messages):
     try:
         validate_feedback(context, parse_model_json(reply.content))
         return reply
     except (ModelJobError, ModelJSONError) as error:
         instruction = ('总结证据校验失败：' + str(error) + '。重新检查每条原话的 role，必须来自 user。'
                        '面试官给出的解释不能算学生会了。只输出原协议 JSON，不编造引文；自我修正引用前后两次用户回答。')
+    from app.services.model_diagnostics import log_event, started_at
+    from app.services.model_jobs import load_model_request_owned, update_model_request_owned
     with transaction(connection):
-        stored = json.loads(connection.execute('SELECT config_json FROM model_request WHERE job_id=?', (job_id,)).fetchone()[0])
+        stored = json.loads(load_model_request_owned(connection, job_id, execution_id)['config_json'])
         stored['format_repair'] = {'rejected_response': reply.content, 'instruction': instruction, 'max_tokens': config['max_tokens']}
-        connection.execute('UPDATE model_request SET config_json=? WHERE job_id=?', (json.dumps(stored, ensure_ascii=False), job_id))
+        update_model_request_owned(connection, job_id, execution_id,
+                                   config_json=json.dumps(stored, ensure_ascii=False))
+    repair_started = started_at()
     fixed = complete_json(model, [*messages, {'role':'assistant', 'content':reply.content}, {'role':'user', 'content':instruction}], config['max_tokens'])
+    log_event(job_id, 'interview_feedback', execution_id, 'repair', started=repair_started, reply=fixed)
     validate_feedback(context, parse_model_json(fixed.content))
     return fixed

@@ -11,6 +11,8 @@ def add_source(connection: sqlite3.Connection, source_id: str = "source-code") -
 
 def remove_migrations_after(connection: sqlite3.Connection, version: int) -> None:
     """Remove newer additive schema objects before replaying an old migration."""
+    if version < 16:
+        connection.execute("DROP TABLE IF EXISTS model_job_execution")
     if version < 15:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(daily_plan)")}
         if "theory_scope_json" in columns:

@@ -164,6 +164,23 @@ def exposed_recently(
     return row is not None
 
 
+def review_hint_flags(connection: sqlite3.Connection, at: datetime):
+    """Load per-round hint inputs in two fixed queries instead of three per row."""
+    cutoff = (at - timedelta(hours=24)).isoformat()
+    today_passes = {row['review_round_id'] for row in connection.execute(
+        'SELECT DISTINCT review_round_id FROM valid_review_pass WHERE activity_date=?',
+        (at.date().isoformat(),))}
+    exposed_questions = {row['question_id'] for row in connection.execute(
+        "SELECT question_id FROM question_exposure WHERE julianday(happened_at)>julianday(?) "
+        "AND julianday(happened_at)<=julianday(?) UNION SELECT DISTINCT t.question_id FROM attempt a "
+        "JOIN task t ON t.id=a.task_id WHERE (julianday(a.answer_exposed_at)>julianday(?) "
+        "AND julianday(a.answer_exposed_at)<=julianday(?)) OR EXISTS(SELECT 1 FROM answer_exposure e "
+        "WHERE e.attempt_id=a.id AND julianday(e.happened_at)>julianday(?) "
+        "AND julianday(e.happened_at)<=julianday(?))",
+        (cutoff, at.isoformat(), cutoff, at.isoformat(), cutoff, at.isoformat()))}
+    return today_passes, exposed_questions
+
+
 def _attempt_question_id(connection: sqlite3.Connection, attempt_id: str) -> str:
     row = connection.execute(
         "SELECT t.question_id FROM attempt a JOIN task t ON t.id=a.task_id WHERE a.id=?",

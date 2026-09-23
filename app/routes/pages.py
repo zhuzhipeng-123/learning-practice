@@ -19,7 +19,7 @@ from app.services.free_requests import ORIGINAL_LIMIT, VARIANT_LIMIT
 from app.services.learning_clock import local_now, local_today
 from app.services.llm_config import MODULES, agnes_configured, get_module_config
 from app.services.model_budget import OUTPUT_TOKEN_MAX, OUTPUT_TOKEN_MIN
-from app.services.review import exposed_recently
+from app.services.review import review_hint_flags
 from app.services.source_coverage import coverage
 from app.services.source_refresh import source_status
 from app.storage.dependencies import get_database
@@ -239,19 +239,21 @@ def configure_pages(templates: Jinja2Templates) -> APIRouter:
             "JOIN question_version v ON v.id=(SELECT v2.id FROM question_version v2 "
             "WHERE v2.question_id=q.id AND v2.review_basis_id=r.review_basis_id ORDER BY v2.rowid DESC LIMIT 1) "
             "LEFT JOIN valid_review_pass p ON p.review_round_id=r.id "
-            "GROUP BY r.id ORDER BY CASE WHEN r.status='active' THEN 0 ELSE 1 END,r.started_at DESC"
+            "GROUP BY r.id ORDER BY CASE WHEN r.status='active' THEN 0 ELSE 1 END,r.started_at DESC,r.id"
         ).fetchall()
         rounds = [dict(row) for row in rounds]
         if mastery != 'all':
             rounds = [item for item in rounds if (item['mastery_level'] or 'ungraded') == mastery]
         level_order = {'unknown': 0, 'vague': 1, 'partial': 2, None: 3}
-        rounds.sort(key=lambda item: (item['status'] != 'active', level_order[item['mastery_level']], item['started_at']))
+        rounds.sort(key=lambda item: (item['status'] != 'active', level_order[item['mastery_level']],
+                                      item['started_at'], item['id']))
         now = local_now()
+        today_passes, exposed_questions = review_hint_flags(database, now)
         for item in rounds:
             item['span_days'] = round((datetime.fromisoformat(item['last_pass_at']) - datetime.fromisoformat(item['first_pass_at'])).total_seconds() / 86400, 2) if item['first_pass_at'] else 0
-            if database.execute('SELECT 1 FROM valid_review_pass WHERE review_round_id=? AND activity_date=?', (item['id'], now.date().isoformat())).fetchone():
+            if item['id'] in today_passes:
                 item['hint'] = '今天已记过一次独立答对，可以继续练，但不会重复计数。'
-            elif exposed_recently(database, item['question_id'], now):
+            elif item['question_id'] in exposed_questions:
                 item['hint'] = '最近24小时查看过参考答案或含答案的历史记录；现在可以练，独立答对次数暂不增加。'
             else:
                 item['hint'] = '先独立作答，通过后记录今天的一次进步。'

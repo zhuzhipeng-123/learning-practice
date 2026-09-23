@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block title %}这道题的学习记录{% endblock %}{% block content %}
 <h2 id="question-heading">{{ question.prompt }}</h2><p class="muted" id="question-metadata">{{ question.category_path }} · {{ '飞书原题' if question.source_kind == 'feishu' else '派生题' }}{{ ' · 来源已变化，历史仍保留' if question.source_status != 'active' else '' }}</p>
 {% if derived_from %}<p class="notice">来自<a href="/interview/{{ derived_from.session_id }}">这场面试的追问</a></p>{% endif %}
-{% if question.source_kind == 'derived' %}<p class="notice" id="knowledge-verification-status">{{ '当前参考已由你核对' if reference_verification.verified else '当前参考待核对，不能用于自动评分；你仍可手动评价。' }}</p>{% endif %}
+{% if question.source_kind == 'feishu' %}<p class="notice" id="knowledge-verification-status">当前参考来自来源笔记，不表示已逐项人工核验；重要结论请结合原始资料判断。</p>{% else %}<p class="notice" id="knowledge-verification-status">{{ '当前参考已由你核对' if reference_verification.human_verified else '当前参考待核对，不能用于自动评分；你仍可手动评价。' }}</p>{% endif %}
 {% include 'knowledge_editor.html' %}
 <section class="panel"><h3>作答与评价</h3>{% for attempt in attempts %}<div class="task-row"><div><strong>{{ attempt.activity_date }}</strong><p>{{ {'daily':'每日练习','free_practice':'自由练习','review':'复习','interview':'面试'}.get(attempt.origin,'练习') }} · {{ {'aligned':'通过','needs_review':'需要复习','unable_to_assess':'依据不足'}.get(attempt.verdict,'会做' if attempt.code_self_result == 'can_solve' else '不会做' if attempt.code_self_result else '待评价') }}</p></div><a href="/practice/{{ attempt.task_id }}">查看答案、备注与评价</a></div>{% else %}<p class="muted">还没有提交作答。</p>{% endfor %}
 {% if page > 1 %}<a href="?page={{ page - 1 }}">上一页</a>{% endif %} <span>第 {{ page }} 页</span> {% if has_more %}<a href="?page={{ page + 1 }}">更早记录 →</a>{% endif %}</section>

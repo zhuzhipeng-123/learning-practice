@@ -31,6 +31,15 @@ def client(value):
     return SimpleNamespace(complete=lambda *a, **k: SimpleNamespace(content=json.dumps(value), model='isolated-model'))
 
 
+def test_source_reference_is_not_labeled_as_human_verification(database):
+    question = seed_question(database, 'theory')
+    version = database.execute('SELECT current_version_id FROM question WHERE id=?', (question,)).fetchone()[0]
+    state = verification(database, version)
+    assert state['verified'] is True
+    assert state['kind'] == 'source'
+    assert state['human_verified'] is False
+
+
 def verdict(value='aligned'):
     return {'verdict': value, 'covered_points': [], 'missing_points': [], 'errors': [], 'brief_feedback': '测试反馈', 'evidence_refs': []}
 

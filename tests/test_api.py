@@ -68,3 +68,18 @@ def test_cross_origin_write_is_rejected() -> None:
         )
 
     assert response.status_code == 403
+
+
+def test_bootstrap_source_count_is_total_and_repeated_calls_are_idempotent(database, monkeypatch):
+    from app.routes.api import bootstrap_sources
+
+    database.execute("INSERT INTO source(id,document_id,wiki_url,question_type) "
+                     "VALUES ('manual','manual-doc','https://example.test/manual','code')")
+    database.commit()
+    monkeypatch.setattr('app.services.bootstrap.load_initial_sources', lambda: [
+        ['configured-code', 'code-doc', 'https://example.test/code', 'code'],
+        ['configured-theory', 'theory-doc', 'https://example.test/theory', 'theory'],
+    ])
+    assert bootstrap_sources(database) == {'status': 'ok', 'source_count': 3}
+    assert bootstrap_sources(database) == {'status': 'ok', 'source_count': 3}
+    assert database.execute('SELECT COUNT(*) FROM source').fetchone()[0] == 3
